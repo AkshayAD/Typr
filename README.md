@@ -1,57 +1,69 @@
 # Typr
 
-Local-first hold-to-talk dictation for Windows. Early engineering preview, built with C#/.NET 8, WPF, NAudio and sherpa-onnx.
+A local-first voice-to-text workspace for Windows. Built with C#/.NET 8, WPF, NAudio and sherpa-onnx. No account, API key or cloud transcription required.
 
-**Not yet validated for everyday use.** The source cross-builds for Windows and has automated logic tests; native microphone, shortcuts, clipboard, focus and multi-monitor behavior still require Windows testing. No public installer or binary release is offered yet.
+This is a development preview. The redesigned interface and synthetic speech path have automated Windows coverage; real microphones, global shortcuts, external-app insertion, long sessions and mixed-monitor DPI still need the [Windows validation checklist](docs/WINDOWS_VALIDATION.md). There is no signed installer or public binary release yet.
 
-## Current preview
-- Ctrl+Alt hold-to-talk, Ctrl+Alt+Space hands-free, Esc to cancel
-- Local streaming English speech recognition using Nemotron EN 0.6B int8
-- Live caption strips and microphone meter
-- Conservative cleanup that preserves wording
-- Verified paste into known writable, non-password fields
-- Explicit Copy result fallback; no automatic duplicate paste after uncertain verification
-- Resumable, hash-verified speech model download
+## The desktop experience
 
-The current executable is named `AvaVoice.exe`; namespaces and data directories still use `Ava`. Naming cleanup is pending.
+- **Workspace:** visible Start / Finish / Cancel practice dictation, listening timer, microphone meter and a recoverable latest transcript.
+- **History:** opt-in local transcript retention, newest 200 entries, search, selection, copy, individual removal and confirmed clear-all.
+- **Vocabulary:** explicit spoken-phrase → preferred-spelling rules, applied to completed Clean output.
+- **Snippets:** spoken phrases expand into literal reusable text, including multiline content.
+- **Appearance:** Light, Dark and System themes, Iris/Forest/Ocean accents, live captions, floating indicator, line count and readable caption backgrounds.
+- **Settings:** resumable/hash-verified model setup, microphone lifecycle, Clean/Raw output and opt-in bounded audio retention.
 
-## Build
+English recognition uses the local Nemotron EN 0.6B int8 streaming model. Clean output uses conservative deterministic cleanup and your explicit rules. Raw bypasses both. AI rewriting, adaptive per-app styles, multilingual recognition, configurable shortcuts, tray behavior and an updater remain future work.
 
-Install a supported .NET 8 SDK from Microsoft, then:
+The [detailed product and design plan](docs/PRODUCT_DESIGN_PLAN.md) covers the complete experience and the evidence needed to assess Wispr Flow parity. [Implementation status](docs/IMPLEMENTATION_STATUS.md) separates delivered features, actual test evidence and remaining work. Visual improvements do not establish speech-quality or reliability parity.
 
-```sh
+## Run and build
+
+Use a supported .NET SDK with Windows desktop targeting support:
+
+```powershell
 dotnet test tests/Ava.Core.Tests -c Release
 dotnet test tests/Ava.Infrastructure.Tests -c Release
+dotnet test tests/Ava.Windows.Tests -c Release
 dotnet build src/Ava.Windows -c Release -m:1 -p:BuildInParallel=false
+dotnet run --project src/Ava.Windows -c Release
+```
+
+WPF integration tests run on Windows and use isolated temporary profiles. The real-model replay test is skipped unless explicitly configured; see [Development](docs/DEVELOPMENT.md).
+
+For a self-contained local build:
+
+```powershell
 dotnet publish src/Ava.Windows -c Release -r win-x64 --self-contained true -m:1 -p:BuildInParallel=false -o artifacts/windows
 ```
 
-The published application is self-contained and does not require a runtime installation. The speech model is downloaded separately (approximately 632 MiB); it is not in this repository. No administrator elevation should be required.
+The executable remains `AvaVoice.exe`, with existing `Ava` project names and data locations retained for compatibility. The visible application is Typr. The speech model is separate (about 632 MiB) and is never committed.
 
-The preview uses .NET 8. The final preview build used SDK 8.0.426/runtime 8.0.32. .NET 8 support ends November 10, 2026; migrate to a supported runtime before a longer-term release.
+.NET 8 support ends November 10, 2026. Migration to a supported LTS runtime is a release prerequisite; this change retains the existing runtime to keep the UI work bounded.
 
-## First test
+## First dictation
 
-1. Use a disposable local text field and an idle testing session.
-2. Launch the application, choose Download speech model, then Load speech.
-3. Test in the built-in practice box first. Hold Ctrl+Alt, speak, then release.
-4. Verify cancellation and clipboard preservation before testing other apps.
-5. Close mic to release capture and global shortcuts.
+1. Open **Settings** and choose **Download speech model**, or expand advanced settings to select an existing model folder.
+2. Choose **Enable microphone**. Typr verifies the model and opens the communications-default microphone.
+3. In **Workspace**, choose **Start dictation**, speak, then choose **Finish dictation**. Practice text is inserted directly into the built-in field without changing the clipboard.
+4. In another writable text field, hold **Ctrl + Alt**, speak, then release. Use a disposable field for initial testing.
+5. Choose **Close microphone** in Settings when finished. Closing the app also releases capture and shortcuts.
 
-Do not bypass Windows security warnings. See [Windows validation](docs/WINDOWS_VALIDATION.md).
+Shortcuts are fixed for now: Ctrl+Alt hold-to-talk; add Space for hands-free, then Ctrl+Alt again finishes; add Shift for Raw; Esc cancels recording/processing before insertion; Ctrl+Shift+Z explicitly repeats the latest result. That repeat shortcut is reserved while the microphone is enabled.
 
-## Privacy and safety
+## Privacy and recovery
 
-Speech runs locally after the model download. No cloud AI, subscription login, API key, telemetry or paid service is enabled by this code. Downloads contact Hugging Face.
+After model download, speech runs on your PC. Downloads contact Hugging Face. There is no telemetry, model-training upload, paid service or mandatory login in this code.
 
-Settings are stored under `%APPDATA%\Ava`; recordings and diagnostic logs under `%LOCALAPPDATA%\Ava`. The last 200 WAV recordings are retained locally. Delivery logs contain diagnostic state, not dictated text. Do not publish recordings, settings or logs.
+- The microphone stays open for pre-roll after you enable it, until you close it or quit. It never starts automatically on launch.
+- New profiles save neither audio nor history by default. Existing explicit audio-retention preferences are preserved.
+- Optional completed audio is bounded to the configured limit (up to 200 WAVs). Cancelled/faulted captures are discarded. Switching retention off affects future recordings; existing files remain.
+- History is separately opt-in, stored locally and bounded to 200 completed transcripts. Switching it off stops new saves without deleting existing entries.
+- Settings/vocabulary/snippets: `%APPDATA%\Ava\settings.json`. History: `%LOCALAPPDATA%\Ava\history.json`. Audio/diagnostics: `%LOCALAPPDATA%\Ava\audio` and `logs`.
+- Do not publish personal settings, recordings, transcripts or logs. Corrupt/future-version settings and history files are preserved instead of overwritten.
 
-Automatic paste is restricted to explicitly writable/non-password controls and empty/plain-text clipboard contents. Rich clipboard formats remain untouched. Native focus checks and SendInput cannot be atomic; validate behavior in the apps you use. Ctrl+Shift+Z is reserved while global shortcuts are active, including before the first dictation.
-
-## Roadmap
-
-Windows runtime validation; simpler setup; supported-runtime migration; local LLM polishing; review-before-apply voice editing; history, vocabulary and snippets; polished tray/onboarding; signed installer and updater. None of these future features is implied to be complete.
+Automatic insertion retains the original safeguards for known writable, non-password fields, focus checks and compatible clipboard contents. Rich clipboard formats are left untouched. Native focus and input injection cannot be atomic. Ambiguous delivery offers Copy rather than automatically retrying; cancelling cannot undo text already inserted.
 
 ## Licensing
 
-No open-source license has been granted for original project code yet. Public visibility alone does not grant general reuse or redistribution rights. Dependency and model licenses are separate; see [third-party information](THIRD_PARTY_NOTICES.md). Binary redistribution remains gated on a complete dependency-notice review.
+No open-source license has been granted for original project code yet. Public visibility alone does not grant reuse or redistribution rights. Dependencies/models have separate licenses; see [third-party information](THIRD_PARTY_NOTICES.md). Binary redistribution remains gated on dependency-notice review.

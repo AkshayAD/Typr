@@ -3,6 +3,8 @@ using System.Text.Json.Nodes;
 
 namespace Ava.Core;
 
+public sealed record TextReplacement(string Phrase, string Replacement);
+
 public sealed record AppSettings
 {
     public const int CurrentVersion = 2;
@@ -10,12 +12,17 @@ public sealed record AppSettings
     public bool PolishEnabled { get; init; } = true;
     public bool LiveCaptionsEnabled { get; init; } = true;
     public bool BarVisible { get; init; } = true;
-    public double CaptionOpacity { get; init; } = .15;
+    public double CaptionOpacity { get; init; } = .85;
     public int CaptionMaxLines { get; init; } = 2;
     public int CaptionMaxCharacters { get; init; } = 60;
     public int CpuThreads { get; init; } = 2;
-    public int SavedAudioLimit { get; init; } = 200;
+    public int SavedAudioLimit { get; init; }
     public string? SpeechModelPath { get; init; }
+    public string Theme { get; init; } = "System";
+    public string Accent { get; init; } = "Iris";
+    public bool SaveHistory { get; init; }
+    public TextReplacement[] Vocabulary { get; init; } = [];
+    public TextReplacement[] Snippets { get; init; } = [];
 }
 
 public static class SettingsMigrator
@@ -49,7 +56,11 @@ public static class SettingsMigrator
             CaptionMaxLines = Math.Clamp(settings.CaptionMaxLines, 1, 3),
             CaptionMaxCharacters = Math.Clamp(settings.CaptionMaxCharacters, 10, 120),
             CpuThreads = Math.Clamp(settings.CpuThreads, 2, 4),
-            SavedAudioLimit = Math.Clamp(settings.SavedAudioLimit, 0, 200)
+            SavedAudioLimit = Math.Clamp(settings.SavedAudioLimit, 0, 200),
+            Theme = CanonicalChoice(settings.Theme, "System", "Light", "Dark"),
+            Accent = CanonicalChoice(settings.Accent, "Iris", "Forest", "Ocean"),
+            Vocabulary = OutputPersonalizer.NormalizeRules(settings.Vocabulary),
+            Snippets = OutputPersonalizer.NormalizeRules(settings.Snippets)
         };
     }
 
@@ -69,6 +80,9 @@ public static class SettingsMigrator
         node.Remove("CaptionOpacityPercent");
     }
     private static void Migrate1To2(JsonObject node) => Rename(node, "CaptionLines", "CaptionMaxLines");
+    private static string CanonicalChoice(string? value, params string[] choices)
+        => choices.FirstOrDefault(choice => choice.Equals(value?.Trim(), StringComparison.OrdinalIgnoreCase)) ?? choices[0];
+
     private static void Rename(JsonObject node, string from, string to)
     {
         if (!node.ContainsKey(to) && node[from] is { } value) node[to] = value.DeepClone();
@@ -79,7 +93,9 @@ public static class SettingsMigrator
         string[] names = [nameof(AppSettings.SettingsVersion), nameof(AppSettings.PolishEnabled),
             nameof(AppSettings.LiveCaptionsEnabled), nameof(AppSettings.BarVisible), nameof(AppSettings.CaptionOpacity),
             nameof(AppSettings.CaptionMaxLines), nameof(AppSettings.CaptionMaxCharacters), nameof(AppSettings.CpuThreads),
-            nameof(AppSettings.SavedAudioLimit), nameof(AppSettings.SpeechModelPath), "Polish", "CaptionOpacityPercent", "CaptionLines"];
+            nameof(AppSettings.SavedAudioLimit), nameof(AppSettings.SpeechModelPath), nameof(AppSettings.Theme),
+            nameof(AppSettings.Accent), nameof(AppSettings.SaveHistory), nameof(AppSettings.Vocabulary),
+            nameof(AppSettings.Snippets), "Polish", "CaptionOpacityPercent", "CaptionLines"];
         foreach (string key in node.Select(p => p.Key).ToArray())
         {
             string? canonical = names.FirstOrDefault(n => n.Equals(key, StringComparison.OrdinalIgnoreCase));

@@ -16,7 +16,11 @@ internal sealed class GlobalKeyboardHook : IDisposable
     private nint _hook;
     private Exception? _startupError;
     private bool _disposed;
+    private bool _escapeClaimed;
+    private volatile bool _cancellationActive;
+    public bool CancellationActive { get => _cancellationActive; set => _cancellationActive = value; }
     public event Action<HotkeyUpdate, nint>? Updated;
+    public event Action? EscapePressed;
 
     public GlobalKeyboardHook()
     {
@@ -65,11 +69,15 @@ internal sealed class GlobalKeyboardHook : IDisposable
             return NativeMethods.CallNextHookEx(_hook, code, wParam, lParam);
         try
         {
+            // Finalization outlives the hold-to-talk state machine's recording state.
+            bool cancelEscape = key == HotkeyKey.Escape && (_escapeClaimed || down && _cancellationActive);
+            if (cancelEscape) _escapeClaimed = down;
+            if (key == HotkeyKey.Escape && down && !wasDown) EscapePressed?.Invoke();
             var update = _machine.Process(key, key == HotkeyKey.Other ? down : isDown);
             if (update.SendDummyKeyBeforeRelease)
                 NativeMethods.SendKeys(NativeMethods.Key(0xE8), NativeMethods.Key(0xE8, true));
             Updated?.Invoke(update, NativeMethods.GetForegroundWindow());
-            if (update.SuppressKey) return 1;
+            if (update.SuppressKey || cancelEscape) return 1;
         }
         catch { /* Never let an exception escape a native callback. */ }
         return NativeMethods.CallNextHookEx(_hook, code, wParam, lParam);

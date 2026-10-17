@@ -15,17 +15,21 @@ public sealed class SpeechSession : IDisposable
     OnlineStream? stream;
     WasapiCapture? capture;
     MMDevice? device;
-    WaveFileWriter? recording;
+    SavedAudioRecording? recording;
     bool disposed;
     float[]? replaySamples; CancellationTokenSource? replayCancellation;
     volatile bool faulted;
     readonly RecordingGeneration generationGate=new();
     int activeEpoch;
+    int savedAudioLimit;
+    public int SavedAudioLimit { get => Volatile.Read(ref savedAudioLimit); set => Volatile.Write(ref savedAudioLimit, Math.Clamp(value, 0, 200)); }
     public event Action<string>? Caption;
+    public event Action<int, string>? CaptionForRecording;
     public event Action<float>? Level;
     public event Action<string>? Error;
-    public SpeechSession(string modelDirectory, int threads = 2)
+    public SpeechSession(string modelDirectory, int threads = 2, int savedAudioLimit = 0)
     {
+        SavedAudioLimit = savedAudioLimit;
         if (!ModelDownload.IsReady(modelDirectory)) throw new FileNotFoundException("Download the speech model first.");
         if(!ModelDownload.VerifyAsync(modelDirectory).GetAwaiter().GetResult()) throw new IOException("Speech model integrity check failed. Download it again.");
         var config = new OnlineRecognizerConfig();
@@ -60,16 +64,15 @@ public sealed class SpeechSession : IDisposable
         capture.RecordingStopped += (_,e) => { if(e.Exception != null) { faulted=true; Error?.Invoke(e.Exception.Message); } };
         capture.StartRecording();
     }
-    public void StartRecording()
+    public int StartRecording()
     {
         int generation=generationGate.Begin();
+        int audioLimit=SavedAudioLimit;
         Enqueue(() => {
         if(!generationGate.IsCurrent(generation)) return;
         Abort(); activeEpoch=generation; faulted=false; stream=recognizer.CreateStream();
         var dir=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Ava","audio");
-        Directory.CreateDirectory(dir);
-        recording=new WaveFileWriter(Path.Combine(dir,$"{DateTime.UtcNow:yyyyMMddTHHmmssfff}-{Guid.NewGuid():N}.wav"),new WaveFormat(16000,16,1));
-        foreach(var file in Directory.GetFiles(dir,"*.wav").OrderByDescending(File.GetLastWriteTimeUtc).Skip(200)) File.Delete(file);
+        recording=SavedAudioRecording.Start(dir,audioLimit);
         if(replaySamples != null) preRoll.Clear();
         Accept(preRoll.ToArray());
         if(replaySamples != null) {
@@ -77,10 +80,12 @@ public sealed class SpeechSession : IDisposable
             _=Task.Run(async()=> { try { for(int offset=0;offset<replaySamples.Length;offset+=320) { token.ThrowIfCancellationRequested(); QueueAudio(replaySamples.Skip(offset).Take(320).ToArray()); await Task.Delay(20,token); } } catch(OperationCanceledException) { } });
         }
     });
+        return generation;
     }
     public async Task<string> StopRecordingAsync(CancellationToken cancellationToken=default)
     {
         int stoppingGeneration=generationGate.Current;
+        using var cancellation=cancellationToken.Register(() => { if(generationGate.IsCurrent(stoppingGeneration)) CancelRecording(); });
         await Task.Delay(300,cancellationToken);
         var result = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         Enqueue(() => {
@@ -90,7 +95,12 @@ public sealed class SpeechSession : IDisposable
                 if(stream==null) { result.SetResult(""); return; }
                 if(pending.Count>0) { var tail=new float[8960]; pending.CopyTo(tail); pending.Clear(); stream.AcceptWaveform(16000,tail); }
                 stream.AcceptWaveform(16000,new float[16000]); stream.InputFinished(); Decode();
-                result.SetResult(recognizer.GetResult(stream).Text.Trim());
+                var text=recognizer.GetResult(stream).Text.Trim();
+                cancellationToken.ThrowIfCancellationRequested();
+                if(!generationGate.IsCurrent(stoppingGeneration)) { result.TrySetCanceled(new CancellationToken(true)); return; }
+                if(faulted) throw new InvalidOperationException("Audio capture failed; nothing was pasted.");
+                recording?.Complete();
+                result.SetResult(text);
             } catch(Exception e) { result.TrySetException(e); }
             finally { Abort(); }
         });
@@ -118,12 +128,18 @@ public sealed class SpeechSession : IDisposable
     }
     void Accept(float[] samples)
     {
-        recording?.WriteSamples(samples,0,samples.Length);
+        recording?.WriteSamples(samples);
         pending.AddRange(samples);
         while(pending.Count>=8960) { var chunk=pending.GetRange(0,8960).ToArray(); pending.RemoveRange(0,8960); stream!.AcceptWaveform(16000,chunk); Decode(); }
     }
-    void Decode() { while(recognizer.IsReady(stream!)) recognizer.Decode(stream!); Caption?.Invoke(recognizer.GetResult(stream!).Text); }
-    void Abort() { replayCancellation?.Cancel(); replayCancellation?.Dispose(); replayCancellation=null; recording?.Dispose(); recording=null; stream?.Dispose(); stream=null; pending.Clear(); }
+    void Decode() { while(recognizer.IsReady(stream!)) recognizer.Decode(stream!); var text=recognizer.GetResult(stream!).Text; CaptionForRecording?.Invoke(activeEpoch,text); Caption?.Invoke(text); }
+    void Abort()
+    {
+        replayCancellation?.Cancel(); replayCancellation?.Dispose(); replayCancellation=null;
+        var audio=recording; recording=null;
+        try { audio?.Dispose(); }
+        finally { stream?.Dispose(); stream=null; pending.Clear(); }
+    }
     public void Dispose()
     {
         if(disposed)return; disposed=true; capture?.StopRecording(); capture?.Dispose(); device?.Dispose();

@@ -2,6 +2,8 @@
 
 Cross-compilation and pure tests do not verify Windows runtime behavior. Do not drive the keyboard while someone is using the computer; use a clearly agreed idle test window and disposable local text.
 
+The redesign has native WPF interaction tests and a real-recognizer synthetic replay check; [implementation evidence](IMPLEMENTATION_STATUS.md) records what actually passed. These do not replace the hardware, global-keyboard, external-app delivery and mixed-DPI checks below.
+
 1. Check the OS, CPU, available memory and audio device. Do not require administrator elevation.
 2. Test model download, pause/resume, corruption detection, loading failures and responsive cancellation.
 3. Test the communications-default microphone, 300 ms pre-roll and 300 ms release tail. Verify beginning/end words are preserved.
