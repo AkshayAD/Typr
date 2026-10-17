@@ -6,7 +6,7 @@ Prepared 18 October 2026. This is the design and acceptance specification; compl
 
 Make Typr a desktop tool people can understand in a minute, use without interrupting their writing, and trust with their words. The core promise is **your voice, at home on your PC**. Retain the existing native Windows/WPF foundation and local recognition: an Electron rewrite would add migration and distribution work without fixing dictation quality.
 
-“At least as good as Wispr” is a product benchmark, not a claim we can establish from screenshots. Separate visual quality, workflow completeness, transcription accuracy, latency, app compatibility and release reliability. This work delivers a substantial native experience foundation, then records the remaining evidence needed for parity.
+Assess visual quality, workflow completeness, transcription accuracy, latency, target compatibility and release reliability independently. A polished screen does not establish speech quality or everyday reliability.
 
 Release acceptance:
 
@@ -21,11 +21,11 @@ Release acceptance:
 
 ## 2. Existing product audit
 
-The repository already has streaming local English speech recognition, pre-roll, Ctrl+Alt hold-to-talk, hands-free dictation, a non-activating caption overlay, resumable/hash-verified model download, and conservative clipboard delivery. These are worth retaining.
+The repository already has streaming local English speech recognition, Ctrl+Alt hold-to-talk, hands-free dictation, a non-activating caption overlay, resumable/hash-verified model download, and conservative clipboard delivery. These are worth retaining.
 
 Current experience problems:
 
-1. The window says Ava, while the repository/product says Typr. There is no consistent identity.
+1. The original identity was inconsistent across the window, build and repository.
 2. All controls sit in one long dark settings screen. Setup, practice, results and diagnostics compete for attention.
 3. The main actions use engineering language: CPU threads, model folders and pilot phases are more prominent than speaking.
 4. First-run has no clear progress, recommended path or completion milestone.
@@ -36,18 +36,13 @@ Current experience problems:
 9. Empty, loading, error, unavailable and success states are not designed as a system.
 10. Accuracy, latency, real microphone behavior, target-app coverage and multi-monitor layout have not been demonstrated.
 
-## 3. Competitive benchmark and differentiation
+## 3. Product quality baseline
 
-Research uses official Wispr sources retrieved 18 October 2026:
+The workflow target is immediate, dependable dictation with personalization, understandable privacy and recoverable output. Measure each dimension on real tasks.
 
-- [What is Wispr Flow?](https://docs.wisprflow.ai/articles/2772472373-what-is-flow): shortcut-driven dictation into the selected field, completed text after stopping, hands-free controls, recovery and permission setup.
-- [Wispr Flow](https://wisprflow.ai/): cleanup, dictionary, snippets, writing styles and multilingual recognition.
-
-These establish workflow expectations; marketing speed claims are not Typr measurements.
-
-| Dimension | Typr target | First implementation | Evidence for full parity |
+| Dimension | Typr target | First implementation | Evidence for daily reliability |
 | --- | --- | --- | --- |
-| Dictate anywhere | Shortcut, focus-safe insertion, clear fallback | Preserve existing delivery and improve recovery UX | Notepad, browser inputs, Office, chat, IDE and terminal matrix |
+| Dictate anywhere | Shortcut, focus-safe insertion, clear fallback | Preserve existing delivery and improve recovery UX | Simple editors, browser fields, document editors, chat, IDE and terminal matrix |
 | Visual quality | Calm, consistent native workspace | Complete shell, typography, spacing and component states | Review at multiple resolutions, DPI and themes |
 | Personalization | Vocabulary, snippets, output preferences | Explicit local replacement rules and Raw bypass | Accuracy corpus with names, punctuation and mixed cases |
 | Writing styles | Preserve meaning while adapting tone | Honest Clean / Raw choices | Optional local polishing model and semantic guard tests |
@@ -100,7 +95,7 @@ The workspace begins with a small date-independent label and a clear statement: 
 
 Below it:
 
-- Readiness banner: not downloaded / found / loading / microphone open / microphone closed / error.
+- Readiness banner: not downloaded / found / preparing / speech ready with microphone off / listening / error.
 - Main practice card: a labelled multiline input, Start/Finish action, Cancel action while active, elapsed listening time, microphone level and shortcut reminder.
 - Latest result card: completed transcript, Copy, delivery status and pointer to History. Keep it visible when insertion fails.
 - Compact shortcut guide: hold Ctrl+Alt; add Space for hands-free; Esc cancels; Ctrl+Shift+Z repeats the last result; add Shift for temporary Raw.
@@ -112,10 +107,10 @@ Avoid fake word/time-saved metrics. Any counts shown must derive from actual loc
 1. Explain local processing, English-only support and the approximate 632 MiB one-time download before starting it.
 2. Provide **Download speech model** as the recommended route; disclose Hugging Face as download host. Retain advanced existing-folder input.
 3. Show percentage and resumable cancellation. Pausing preserves partial download; integrity failure offers a retry without claiming success.
-4. **Enable microphone** verifies and loads the model and opens capture; display loading state immediately. Prevent duplicate loads/downloads.
+4. **Prepare speech** verifies and loads only the model; keep capture closed and display loading state immediately. Prevent duplicate loads/downloads.
 5. Focus the practice field after success. Use a suggested disposable sentence, never automatically start capturing on launch.
 6. A completed practice result is available to copy even when target insertion is unavailable.
-7. Keep **Close microphone** easy to find. Explain that warmed capture remains open for pre-roll until closed or the app exits.
+7. Keep **Unload speech** easy to find. A prepared model stays in memory with capture closed. Only an explicit recording opens shared input; finish/cancel releases it. Default recording starts use shortcuts, with explicit bar/button opt-in.
 
 Error recovery: missing files → download/select folder; microphone failure → clear error and retry after device correction; download interruption → resume; settings corruption → preserve original file and explain read-only fallback.
 
@@ -123,7 +118,7 @@ Error recovery: missing files → download/select folder; microphone failure →
 
 | State | Visible feedback | Allowed actions | Exit condition |
 | --- | --- | --- | --- |
-| Setup needed | Model/mic prerequisites | Setup, edit preferences | Verified model loaded and microphone opened |
+| Setup needed | Model/mic prerequisites | Setup, edit preferences | Verified model prepared; recording shortcut opens microphone |
 | Ready | Ready, shortcut hint | Hold or start practice | User starts recording |
 | Listening | Listening + elapsed time + meter | Finish, Esc/Cancel | Release chord / hands-free finish / Cancel |
 | Processing | Finishing your words | Esc/Cancel | Decoder result or cancellation |
@@ -157,7 +152,7 @@ Persist theme and accent immediately; System follows Windows appearance changes.
 
 ### Retention
 
-Make transcript-history retention explicit, bounded to 200 local entries, and controllable. New profiles do not save raw audio by default. If audio retention is enabled, enforce its configured limit rather than a hardcoded 200. Turning retention off stops future writes; clearing existing data requires an explicit action. Preserve legacy `%APPDATA%\Ava` and `%LOCALAPPDATA%\Ava` locations to avoid losing existing settings/model files during visual rebranding.
+Make transcript-history retention explicit, bounded to 200 local entries, and controllable. New profiles do not save raw audio by default. If audio retention is enabled, enforce its configured limit rather than a hardcoded 200. Turning retention off stops future writes; clearing existing data requires an explicit action. Migrate existing settings/model files safely into `%APPDATA%\Typr` and `%LOCALAPPDATA%\Typr`, preserving originals and existing destinations.
 
 ## 10. History and recovery
 
@@ -186,7 +181,7 @@ History page: search by transcript text, show newest first with date/mode, open 
 7. Perform independent source review and update the implementation evidence, README and validation checklist.
 8. Publish the changes to a reviewable feature branch/PR; do not merge or release a signed installer in this task.
 
-Keep original namespace/project/data-directory names where renaming would add migration risk. The visible product is Typr. Do not add a web dashboard, cloud service, telemetry or paid dependency to achieve the design.
+Rename build identity and data folders to Typr with a tested, non-destructive migration. Do not add a web dashboard, cloud service, telemetry or paid dependency to achieve the design.
 
 ## 13. Verification matrix
 
@@ -204,7 +199,7 @@ Keep original namespace/project/data-directory names where renaming would add mi
 
 Use synthetic phrases and fixtures. Never commit recordings, personal settings, real transcripts, clipboard contents or diagnostic logs. A build is not proof of microphone, recognition or external-app delivery correctness.
 
-## 14. Measuring a Wispr-quality release
+## 14. Measuring release quality
 
 Treat these as proposed acceptance targets, to be measured on a named baseline Windows device:
 
@@ -229,4 +224,8 @@ Do not display unmeasured speed/accuracy claims in the product.
 
 **Milestone D — multilingual and distribution:** evaluate Hindi/Hinglish models rather than relabeling the English engine; migrate to a supported .NET LTS before public release; finish dependency/license notices; signed per-user installer, uninstall and authenticated updater with rollback; publish supported-app/hardware limitations.
 
-**Milestone E — parity review:** run Typr and Wispr on the same consented tasks and hardware, compare time-to-result/edit burden/recovery, run usability sessions and close measured gaps. Only then make a defensible parity claim.
+**Milestone E - release quality review:** measure consented tasks on representative hardware, compare edit burden and recovery across Typr versions, run usability sessions and close measured gaps.
+
+## 16. Daily dictation extension
+
+The [companion, polishing and recovery specification](COMPANION_AND_POLISH_PLAN.md) supersedes the initial scope for movable bar behavior, subscription AI, configurable command shortcuts, richer history, audio re-transcription and the complete Typr identity. See implementation status for measured evidence and remaining limits.

@@ -20,6 +20,12 @@ https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b
 
 The original model is governed by the NVIDIA Open Model License; it must not be described as Apache-licensed merely because the inference engine is Apache-licensed. Review those terms before use or redistribution.
 
-## Distribution boundary
+## Optional multilingual re-transcription and providers
+
+Whisper model exports are fetched separately from [Small](https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small) and [Large v3](https://huggingface.co/csukuangfj/sherpa-onnx-whisper-large-v3). Pinned revisions, sizes and hashes are in `WhisperRetranscriber.cs`. Upstream [Whisper](https://github.com/openai/whisper) code and weights use the [MIT license](https://github.com/openai/whisper/blob/main/LICENSE); review the export and upstream attribution before redistribution. No weights are bundled here.
+
+Optional polishing launches unmodified official [Codex](https://github.com/openai/codex) and [Claude Code](https://code.claude.com/docs/en/overview) executables installed on the user's device or downloaded to Typr's private provider folder. These binaries are not committed or bundled in the application. Their own licenses, service terms, subscription entitlements and authentication rules apply. Claude Code is not represented as open-source software. See its [integration and legal documentation](https://code.claude.com/docs/en/legal-and-compliance).
+
+## Binary notice review
 
 These are dependency/source references, not a complete binary redistribution notice bundle. Before publishing an executable or installer, inventory all resolved native/runtime/transitive packages and include their required license texts and notices. Do not bundle model weights without a separate license and distribution review. No third-party source code has been copied into this repository; integration calls use the dependencies' documented APIs.
