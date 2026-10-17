@@ -1,8 +1,8 @@
 # Deferred desktop and hardware tests
 
-Recorded 18 October 2026. The user is gaming and has explicitly paused computer use. **Do not launch Typr, open browsers/sign-in, show test windows, enumerate microphones, record audio, inject input, take desktop screenshots, or run recognition benchmarks until the user resumes testing.** No automatic follow-up is scheduled.
+The user resumed screen testing on 18 October 2026. The native Windows suite and actual synthetic dictation into a separate process passed. See [desktop validation evidence](DESKTOP_VALIDATION_2026-10-18.md).
 
-Code changes, model research, builds and explicitly hidden/fake-device tests can continue. Earlier native/paste/model results are historical evidence; they do not validate the latest on-demand capture and appearance changes.
+Windows computer use subsequently stopped for this turn because it could not verify the browser's current URL confidently enough to enforce browser policy. No further screen input was issued. Local-file browser navigation was also rejected; it was not bypassed. Browser insertion, physical microphone/call checks and final physical bar verification remain incomplete. Code/headless checks continued, and the isolated synthetic test processes were stopped. No automatic follow-up is scheduled.
 
 ## Resume checklist
 

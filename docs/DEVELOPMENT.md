@@ -34,7 +34,7 @@ dotnet test tests/Typr.Infrastructure.Tests -c Release
 
 The replay test runs paced audio through `SpeechSession`, finalizes a transcript, cancels during finalization, then verifies a fresh recording returns the same transcript under a different generation. It uses no microphone. Without both environment variables the replay test is explicitly skipped.
 
-Interactive replay and all desktop/hardware tests are currently [deferred](DEFERRED_DESKTOP_TESTS.md) while the user is gaming. For interactive native replay, set `TYPR_REPLAY_WAV` only in the process launching Typr, then prepare speech and use a recording shortcut (or explicitly opt into button recording). Clear it before ordinary use. Do not treat injected keyboard input as a physical-global-shortcut test: the native hook intentionally ignores injected input.
+Screen testing resumed after gaming; current outstanding checks and the computer-use policy stop are [recorded here](DEFERRED_DESKTOP_TESTS.md). For interactive native replay, set `TYPR_REPLAY_WAV` only in the process launching Typr, then prepare speech and use a recording shortcut (or explicitly opt into button recording). Clear it before ordinary use. Do not treat injected keyboard input as a physical-global-shortcut test: the native hook intentionally ignores injected input.
 
 ## Contribution privacy
 

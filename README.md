@@ -22,7 +22,7 @@ Platform details follow [.NET Windows support](https://learn.microsoft.com/en-us
 ## The experience
 
 - **Dictate and paste:** keyboard hold or hands-free, with target verification, rich clipboard preservation and Copy recovery. Bar/button recording is an explicit opt-in; shortcuts are the default.
-- **Movable companion:** drag anywhere, including controls; independently customize hover/right-click actions; show/hide bar and live text; adjust background opacity, size and hover delay while keeping text legible.
+- **Movable companion:** a tiny resting pill grows on hover; drag anywhere, including controls; independently customize hover/right-click actions; show/hide bar and live text; adjust background opacity, size and hover delay while keeping text legible.
 - **Microphone on demand:** preparing the model leaves audio hardware closed. Finish/release closes capture after a 300 ms ending tail; cancel closes it without that delay. No idle pre-roll, loopback capture, system mute/default-device changes or exclusive input.
 - **Your AI subscription:** default **GPT-6 Luna, low reasoning**; ChatGPT/Claude priority, connection/model refresh, sign-in, CLI updates and effort comparisons in Settings.
 - **Your words:** punctuation, case, digits, bullets and self-corrections while preserving meaning and English/Roman Hindi. Raw bypasses cleanup and AI. AI can still make mistakes; review important text.

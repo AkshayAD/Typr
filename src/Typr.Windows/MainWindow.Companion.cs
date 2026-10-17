@@ -125,7 +125,7 @@ public partial class MainWindow
     private void ResetBarPosition_Click(object sender, RoutedEventArgs e)
     {
         var work = SystemParameters.WorkArea;
-        PersistSettings(_settings with { BarLeft = work.Left + (work.Width - 340 * _settings.BarScale) / 2, BarTop = work.Bottom - 66 * _settings.BarScale - 18 }); ConfigureCompanion();
+        PersistSettings(_settings with { BarLeft = work.Left + (work.Width - DictationBarWindow.RestingWidth * _settings.BarScale) / 2, BarTop = work.Bottom - DictationBarWindow.RestingHeight * _settings.BarScale - 18 }); ConfigureCompanion();
     }
 
     private void BarPresentation_Changed(object sender, RoutedEventArgs e)

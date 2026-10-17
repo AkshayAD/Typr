@@ -1,6 +1,6 @@
 # Typr: implementation and verification
 
-Date: 18 October 2026. Specifications: [Product/UI plan](PRODUCT_DESIGN_PLAN.md) and [daily dictation extension](COMPANION_AND_POLISH_PLAN.md). The current screen-use restriction and remaining checks are recorded in [deferred desktop tests](DEFERRED_DESKTOP_TESTS.md); efficient English alternatives are assessed in [model research](ENGLISH_MODEL_RESEARCH.md).
+Date: 18 October 2026. Specifications: [Product/UI plan](PRODUCT_DESIGN_PLAN.md) and [daily dictation extension](COMPANION_AND_POLISH_PLAN.md). The current screen-test interruption and remaining checks are recorded in [deferred desktop tests](DEFERRED_DESKTOP_TESTS.md); efficient English alternatives are assessed in [model research](ENGLISH_MODEL_RESEARCH.md).
 
 ## Delivered
 
@@ -9,7 +9,7 @@ Date: 18 October 2026. Specifications: [Product/UI plan](PRODUCT_DESIGN_PLAN.md)
 | Identity and requirements | Typr UI, projects, namespaces, executable and data folders; requirements in Settings/README; staged profile migration preserves originals and existing destinations |
 | Native design | Workspace, History, Vocabulary, Snippets, Appearance and Settings; dynamic light/dark/system themes, three accents and keyboard focus |
 | External insertion | Fixed clipboard sequence sampling after CloseClipboard; supported rich formats preserved; Copy recovery without input for busy/unsupported clipboard data; focus/password/read-only/cancellation guards; no retry after ambiguous input |
-| Companion | Persistent nonactivating movable bar, draggable from controls, click and hold gestures, hover/right-click actions independently configurable, optional live words, hide/show/reset position; 20-100% background opacity, three sizes and four hover delays, solid high-contrast surface |
+| Companion | Minimal 96 by 22 DIP resting pill, 280 by 44 DIP hover controls and labeled right-click actions; finite eased growth, nonactivating and draggable from controls, click and hold gestures, hover/right-click actions independently configurable, optional live words, hide/show/reset position; 20-100% background opacity, three sizes and four hover delays, solid high-contrast surface |
 | Keyboard | Cold-start physical hold plus configurable conflict-aware prepare/start-finish/paste shortcuts; shortcut-only recording by default, explicit bar/button opt-in and one master keyboard switch |
 | Writing quality | Default exact GPT-6 Luna with low reasoning, optional ChatGPT/Claude subscription polishing, provider priority, strict text output, Roman Hindi/digits/lists/corrections prompt, local fallback and Raw bypass |
 | Providers | Official CLI-owned login, status/models/efforts, cancellation, private install/update, integrity checks, isolated text-only requests and no API-credit fallback |
@@ -23,11 +23,10 @@ Speech recognition stays local. Enabling AI polish sends recognized text to the 
 ## Automated evidence
 
 - Latest Core Release suite: **188 passed**.
-- Latest Infrastructure Release suite excluding real-model replay: **100 passed**. Includes 16 fake microphone lifecycle cases; no hardware, models or inference used.
-- Latest hidden Windows Release checks: **39 passed**. Includes cold preparation release/Esc/bar-cancel, positive fake capture, consent guards, picker persistence, actual-closure feedback, empty-result recovery and bar appearance. Excludes the five native delivery cases and the native-handle style case while the user is gaming.
-- Latest total: **327 headless checks passed**. The real-model replay and six native Windows cases are deferred, not counted as passes on the latest changes.
-- Windows Release build: passed with zero warnings/errors.
-- Self-contained Windows x64 publish: passed; build prepared without launching it. Local development preview, not a public signed release.
+- Infrastructure Release suite including real-model synthetic replay: **101 passed, zero skipped**. Includes 16 fake microphone lifecycle cases and paced native recognition/cancellation/restart.
+- Full Windows Release suite before the minimal-pill follow-up: **45 passed**, including native clipboard/input and nonactivating style checks.
+- Latest minimal-pill hidden Windows checks: **85 passed**, including **62 bar checks**. Native input was not repeated after the computer-use policy stop.
+- Windows Release build and self-contained x64 publish passed. The final minimal-pill executable was prepared without launching it after the policy stop; development preview, not a public signed release.
 - Focused security review after repairs: 30 provider tests passed; 13 prompt/output tests are included in the Core suite.
 - History/revision checks include an actual 128 MiB serialized-budget rejection, preserved old state, reloadability, immutable revisions and cross-provider metadata restoration.
 - Migration checks cover preservation, staging, locks/bounds, reparse rejection, existing-destination precedence and model-path confinement.
@@ -57,23 +56,16 @@ Review and regression checks repaired stale provider dropdowns, saved reasoning 
 - The live recognizer is English. Roman Hindi polish cannot recover Hindi speech that was missed; multilingual audio re-transcription requires opt-in retention. Full live bilingual capture remains work.
 - Private ChatGPT sign-in and Claude sign-in require the human user's browser action. Final authenticated Claude quality has not been tested; initial Luna observations are described above with their scope.
 - Native fixture success does not establish every text editor/browser/enterprise/elevated application. Focus changes and input injection cannot be atomic; ambiguous delivery is reported and not repeated.
-- Real microphone/device changes, physical global chords, calls/Bluetooth/game coexistence, multi-hour sessions, physical bar dragging, full mixed-DPI/multi-monitor and assistive-technology evaluation remain pending. New Typr has not been launched during the gaming restriction.
+- Real microphone/device changes, physical global chords, calls/Bluetooth/game coexistence, multi-hour sessions, physical bar dragging, full mixed-DPI/multi-monitor and assistive-technology evaluation remain pending. Native synthetic dictation and automatic insertion were verified after gaming; final pill physical tests remain incomplete after the computer-use policy stop.
 - Hardware recommendations are provisional. No certified minimum-device accuracy or memory study has been performed.
 - A supported LTS runtime migration, complete binary license bundle, signing, installer and authenticated Typr updater are public-release prerequisites. CLI updates are implemented; they do not update Typr itself.
 - No merge or production deployment is part of this change.
 
-## Final check record
+## Desktop follow-up
 
-| Check | Result |
-| --- | --- |
-| Core |188 passed |
-| Infrastructure, no real-model replay |100 passed |
-| Hidden Windows checks, no native handles/input |39 passed |
-| Latest headless total |**327 passed** |
-| Real-model replay and six native Windows checks |Deferred on latest changes |
-| Self-contained Windows x64 publish |Passed; not launched |
-| Documentation links, branding scan and whitespace |Passed |
+The user resumed testing. The full native Windows suite and a real speech-to-paste flow into a separate application passed. See [desktop verification evidence](DESKTOP_VALIDATION_2026-10-18.md) for exact scope, local benchmark observations and the browser URL verification stop.
 
+The bar was then reduced from the original toolbar to a 96 by 22 DIP pill with 280 by 44 DIP hover controls. Review fixed stale context actions, layout changes under pressed controls, off-screen expanded dragging and edge-origin release jumps. A gesture-only watchdog cancels a missed release without synthesizing click/paste. No idle animation or polling is added. Actual-resource light/dark renders were inspected; these are rendered previews, not physical mouse verification. The final hidden Windows suite passed 85 checks, including 32 edge/corner/content combinations and stationary-press coverage. Build/publish passed with no warnings; the final executable was not launched after the policy stop.
 
 **Earlier native observations, before the on-demand/opacity follow-up:** validation used a separate synthetic profile. Observed model setup, practice start/finish, actual recognized text inserted in practice, latest-result recovery, original/final history metadata, and restoring both earlier text and reasoning. One AI-off practice run completed in972ms after stop; this is a single observation. The floating bar was visible at340×66 and its compact/hover WPF renderings were inspected; complete physical mouse/mixed-monitor validation remains pending.
 
