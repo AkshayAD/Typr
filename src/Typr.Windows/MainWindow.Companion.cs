@@ -188,6 +188,9 @@ public partial class MainWindow
                     else StatusText.Text = "Click a writable field before choosing Paste last.";
                     return;
                 }
+                // A keyboard command targets the field focused now. The tracker
+                // can return a cached element while a periodic refresh is pending.
+                if (!fromBar) { await PasteLastAsync(NativeMethods.GetForegroundWindow()); return; }
                 var target = await _externalTargets.RefreshAsync(_lifetime.Token);
                 if (target == null) { StatusText.Text = "Click a writable field in another app, then choose Paste last."; return; }
                 await PasteLastAsync(target.Window, target, restoreFocus: true); return;

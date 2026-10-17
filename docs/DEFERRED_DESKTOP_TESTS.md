@@ -1,8 +1,8 @@
 # Deferred desktop and hardware tests
 
-The user resumed screen testing on 18 October 2026. The native Windows suite and actual synthetic dictation into a separate process passed. See [desktop validation evidence](DESKTOP_VALIDATION_2026-10-18.md).
+The user resumed screen testing on 18 October 2026. The final Windows suite passed **102/102, zero skipped**. Real microphone start/finish/cancel/unload, synthetic recognition into a browser, keyboard paste-last, and same-display pill hover/background/icon dragging were observed. See [desktop validation evidence](DESKTOP_VALIDATION_2026-10-18.md) for exact scope and fixes.
 
-Windows computer use subsequently stopped for this turn because it could not verify the browser's current URL confidently enough to enforce browser policy. No further screen input was issued. Local-file browser navigation was also rejected; it was not bypassed. Browser insertion, physical microphone/call checks and final physical bar verification remain incomplete. Code/headless checks continued, and the isolated synthetic test processes were stopped. No automatic follow-up is scheduled.
+An earlier turn stopped because browser URL verification was unavailable. This session resumed on a public HTTPS test input; blocked local-file navigation was not retried or bypassed. The list below is broader compatibility coverage, not a claim that the successful basic checks remain wholly untested. A prepared human physical hold-to-talk check received no result and remains pending. No automatic follow-up is scheduled.
 
 ## Resume checklist
 

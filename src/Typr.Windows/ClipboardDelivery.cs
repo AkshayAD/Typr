@@ -36,12 +36,29 @@ internal sealed class ClipboardDelivery(string? logDirectory = null)
     public static async Task<DeliveryTarget> CaptureTargetAsync(nint window, CancellationToken cancellationToken, int timeoutMs = 500)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!CaptureGate.Wait(0)) return new(window, null, null, false, false);
-        var capture = Task.Run(() => { try { return CaptureTarget(window); } finally { CaptureGate.Release(); } }, CancellationToken.None);
+        int budget = Math.Max(1, timeoutMs);
+        var elapsed = Stopwatch.StartNew();
+        // The background target poll may briefly own this gate. Wait within this
+        // request's budget instead of rejecting a valid foreground field immediately.
+        if (!await CaptureGate.WaitAsync(budget, cancellationToken)) return new(window, null, null, false, false);
+        int remaining = budget - (int)elapsed.ElapsedMilliseconds;
+        if (remaining <= 0 || cancellationToken.IsCancellationRequested) {
+            CaptureGate.Release();
+            cancellationToken.ThrowIfCancellationRequested();
+            return new(window, null, null, false, false);
+        }
+        var capture = Task.Run(() => {
+            try {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (elapsed.ElapsedMilliseconds >= budget) return new DeliveryTarget(window, null, null, false, false);
+                return CaptureTarget(window);
+            }
+            finally { CaptureGate.Release(); }
+        }, CancellationToken.None);
         try
         {
             return await capture
-                .WaitAsync(TimeSpan.FromMilliseconds(Math.Max(1, timeoutMs)), cancellationToken);
+                .WaitAsync(TimeSpan.FromMilliseconds(remaining), cancellationToken);
         }
         catch (TimeoutException) { return new(window, null, null, false, false); }
     }
@@ -141,7 +158,7 @@ internal sealed class ClipboardDelivery(string? logDirectory = null)
         ClipboardSnapshot previous = new(new Dictionary<uint, byte[]>());
         uint clipboardSequence = 0;
         bool clipboardReplaced = false;
-        bool clipboardRestored = false;
+        bool clipboardCleanupFinished = false;
         long attemptedAt = 0;
         var stopwatch = Stopwatch.StartNew();
         try
@@ -174,10 +191,12 @@ internal sealed class ClipboardDelivery(string? logDirectory = null)
                 return new("Focus or shortcut keys changed. Your result is in Typr; use Copy text when ready.", false);
             }
             cancellationToken.ThrowIfCancellationRequested();
-            if (!SafeClipboard.TryReplacePlainText(text, out previous, out clipboardSequence, out var clipboardReason)) {
+            var replacement = await SafeClipboard.TryReplacePlainTextAsync(text, cancellationToken);
+            if (!replacement.Replaced) {
                 outcome = "clipboard-unavailable";
-                return new(clipboardReason, false);
+                return new(replacement.Reason, false);
             }
+            previous = replacement.Previous; clipboardSequence = replacement.Sequence;
             clipboardReplaced = true;
             outcome = "copied";
             if (Marshal.SizeOf<NativeMethods.Input>() != 40)
@@ -210,18 +229,28 @@ internal sealed class ClipboardDelivery(string? logDirectory = null)
                     // This is cleanup for an already-confirmed paste. Cancellation must not
                     // strand the dictation on the clipboard or erase the previous clipboard.
                     if (clipboardReplaced) await Task.Delay(Math.Max(0, 800 - (int)pasteTimer.ElapsedMilliseconds));
-                    if (clipboardReplaced && SafeClipboard.RestoreIfOwned(previous, clipboardSequence) == ClipboardRestoreResult.BusyOrFailed)
+                    if (clipboardReplaced && await SafeClipboard.RestoreIfOwnedAsync(previous, clipboardSequence) == ClipboardRestoreResult.BusyOrFailed)
                     {
                         outcome = "verified-clipboard-restore-failed";
                         return new("Pasted and verified. The previous clipboard couldn't be restored.", true);
                     }
-                    clipboardRestored = true;
+                    clipboardCleanupFinished = true;
                     outcome = "verified";
                     return new("Pasted and verified.", true);
                 }
             }
             outcome = "inconclusive";
             return new("Insertion sent, but not confirmed. Your result is in Typr. Check the field before trying again.", false);
+        }
+        catch (ClipboardCleanupCanceledException error)
+        {
+            // This exception occurs before any input is sent. Preserve its snapshot
+            // for one recovery attempt and report failure instead of hiding it under cancellation.
+            var recovery = await RecoverCancelledClipboardAsync(error,
+                replacement => SafeClipboard.RestoreIfOwnedAsync(replacement.Previous, replacement.Sequence));
+            clipboardCleanupFinished = true;
+            outcome = recovery.Outcome;
+            return recovery.Result;
         }
         catch (OperationCanceledException)
         {
@@ -234,13 +263,13 @@ internal sealed class ClipboardDelivery(string? logDirectory = null)
         }
         finally
         {
-            if (clipboardReplaced && !clipboardRestored) {
+            if (clipboardReplaced && !clipboardCleanupFinished) {
                 long timestamp = Interlocked.Read(ref attemptedAt);
                 if (timestamp != 0) {
                     double elapsedMs = (Stopwatch.GetTimestamp() - timestamp) * 1000d / Stopwatch.Frequency;
                     await Task.Delay(Math.Max(0, 800 - (int)elapsedMs));
                 }
-                if (SafeClipboard.RestoreIfOwned(previous, clipboardSequence) == ClipboardRestoreResult.BusyOrFailed)
+                if (await SafeClipboard.RestoreIfOwnedAsync(previous, clipboardSequence) == ClipboardRestoreResult.BusyOrFailed)
                     outcome += "-clipboard-restore-failed";
             }
             try
@@ -251,6 +280,17 @@ internal sealed class ClipboardDelivery(string? logDirectory = null)
             }
             catch { }
         }
+    }
+
+    internal static async Task<(DeliveryResult Result, string Outcome)> RecoverCancelledClipboardAsync(
+        ClipboardCleanupCanceledException error, Func<ClipboardReplacement, Task<ClipboardRestoreResult>> restore)
+    {
+        var restored = await restore(error.Replacement);
+        if (restored == ClipboardRestoreResult.BusyOrFailed)
+            return (new("Insertion cancelled. The previous clipboard couldn't be restored. Your result is still in Typr; check the clipboard before copying.", false),
+                "cancelled-clipboard-restore-failed");
+        return (new("Insertion cancelled. Your result is still in Typr.", false),
+            restored == ClipboardRestoreResult.Restored ? "cancelled-clipboard-restored" : "cancelled-clipboard-changed-by-user");
     }
 
     private static string Normalise(string value) => value.Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd('\r', '\n');

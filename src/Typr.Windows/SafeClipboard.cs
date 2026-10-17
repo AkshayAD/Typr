@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 using System.Text;
 using System.Windows;
 using System.Windows.Interop;
@@ -6,6 +7,12 @@ using System.Windows.Interop;
 namespace Typr.Windows;
 
 internal sealed record ClipboardSnapshot(IReadOnlyDictionary<uint, byte[]> Formats);
+internal sealed record ClipboardReplacement(bool Replaced, ClipboardSnapshot Previous, uint Sequence, string Reason);
+internal sealed class ClipboardCleanupCanceledException(ClipboardReplacement replacement, CancellationToken cancellationToken)
+    : OperationCanceledException("Insertion cancelled, but the previous clipboard couldn't be restored.", cancellationToken)
+{
+    public ClipboardReplacement Replacement { get; } = replacement;
+}
 internal enum ClipboardRestoreResult { Restored, ChangedByUser, BusyOrFailed }
 
 /// <summary>Materializes restorable clipboard formats before changing the clipboard.</summary>
@@ -13,6 +20,9 @@ internal static class SafeClipboard
 {
     const uint UnicodeText = 13;
     const int MaximumBytes = 64 * 1024 * 1024;
+    static readonly SemaphoreSlim ReplacementGate = new(1, 1);
+    const string Unavailable = "The clipboard is busy or unavailable. Your result is in Typr; use Copy text when ready.";
+    const string TimedOut = "The clipboard didn't respond in time. Your result is in Typr; use Copy text when ready.";
     [DllImport("user32.dll", SetLastError = true)] static extern bool OpenClipboard(nint owner);
     [DllImport("user32.dll")] static extern bool CloseClipboard();
     [DllImport("user32.dll")] static extern bool EmptyClipboard();
@@ -48,39 +58,89 @@ internal static class SafeClipboard
         finally { CloseClipboard(); }
     }
 
-    public static bool TryReplacePlainText(string text, out ClipboardSnapshot snapshot, out uint sequence, out string reason)
+    public static Task<ClipboardReplacement> TryReplacePlainTextAsync(string text, CancellationToken cancellationToken)
     {
-        snapshot = new(new Dictionary<uint, byte[]>()); sequence = 0;
-        reason = "The clipboard is busy or unavailable. Your result is in Typr; use Copy text when ready.";
+        cancellationToken.ThrowIfCancellationRequested();
+        // Capture the UI-owned HWND before moving all native clipboard work off the dispatcher.
         var owner = Owner;
-        // EmptyClipboard with a null owner cannot subsequently receive SetClipboardData.
-        if (owner == 0 || !OpenClipboard(owner)) return false;
+        if (owner == 0 || !ReplacementGate.Wait(0)) return Task.FromResult(Failure(Unavailable));
+        return RunTransactionAsync(permission => {
+            try { return ReplacePlainText(text, owner, permission); }
+            finally { ReplacementGate.Release(); }
+        }, replacement => RestoreIfOwned(replacement.Previous, replacement.Sequence, owner), cancellationToken);
+    }
+
+    static ClipboardReplacement Failure(string reason) => new(false, new(new Dictionary<uint, byte[]>()), 0, reason);
+
+    // A delayed renderer may not return when our deadline expires. Revoke its write
+    // permission before returning; it can finish reading later but cannot mutate data.
+    internal static async Task<ClipboardReplacement> RunTransactionAsync(
+        Func<ClipboardWritePermission, ClipboardReplacement> replace,
+        Func<ClipboardReplacement, ClipboardRestoreResult> rollback,
+        CancellationToken cancellationToken, int timeoutMs = 500)
+    {
+        var permission = new ClipboardWritePermission(cancellationToken, timeoutMs);
+        var worker = Task.Run(() => replace(permission));
         try {
-            if (!CaptureLocked(out snapshot)) {
-                reason = "Typr cannot safely preserve this clipboard format. Your result is in Typr; use Copy text when ready.";
-                return false;
+            var result = await worker.WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), cancellationToken).ConfigureAwait(false);
+            if (!cancellationToken.IsCancellationRequested && !permission.Expired) return result;
+        }
+        catch (TimeoutException) { }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+
+        string reason = TimedOut;
+        ClipboardReplacement? failedCleanup = null;
+        if (permission.AbandonBeforeWrite()) {
+            // Observe a renderer failure even when the UI has already recovered.
+            _ = worker.ContinueWith(task => { _ = task.Exception; }, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        } else {
+            // Once native mutation begins it cannot be cancelled safely. Finish and
+            // restore before reporting timeout/cancellation, without blocking the UI.
+            var result = await worker.ConfigureAwait(false);
+            if (result.Replaced && await Task.Run(() => rollback(result)).ConfigureAwait(false) == ClipboardRestoreResult.BusyOrFailed) {
+                reason += " The previous clipboard couldn't be restored.";
+                failedCleanup = result;
             }
-            if (!WriteLocked(new Dictionary<uint, byte[]> { [UnicodeText] = Encoding.Unicode.GetBytes(text + "\0") })) {
-                WriteLocked(snapshot.Formats);
-                return false;
+        }
+        if (cancellationToken.IsCancellationRequested) {
+            if (failedCleanup != null) throw new ClipboardCleanupCanceledException(failedCleanup, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        return Failure(reason);
+    }
+
+    static ClipboardReplacement ReplacePlainText(string text, nint owner, ClipboardWritePermission permission)
+    {
+        // EmptyClipboard with a null owner cannot subsequently receive SetClipboardData.
+        if (!permission.CanRead || !OpenClipboard(owner)) return Failure(Unavailable);
+        ClipboardSnapshot snapshot;
+        try {
+            if (!CaptureLocked(out snapshot, () => permission.CanRead))
+                return Failure("Typr cannot safely preserve this clipboard format. Your result is in Typr; use Copy text when ready.");
+            bool writeStarted = false;
+            if (!WriteLocked(new Dictionary<uint, byte[]> { [UnicodeText] = Encoding.Unicode.GetBytes(text + "\0") },
+                () => writeStarted = permission.TryBeginWrite())) {
+                if (writeStarted) WriteLocked(snapshot.Formats);
+                return Failure(Unavailable);
             }
         }
         finally { CloseClipboard(); }
         // Windows finalizes synthesized formats/sequence when the clipboard closes.
         // Capturing the number under the write lock makes our own update appear stale.
-        sequence = NativeMethods.GetClipboardSequenceNumber();
-        if (GetClipboardOwner() != owner) return false;
-        reason = "";
-        return true;
+        uint sequence = NativeMethods.GetClipboardSequenceNumber();
+        if (GetClipboardOwner() != owner) return Failure(Unavailable);
+        return new(true, snapshot, sequence, "");
     }
 
-    static bool CaptureLocked(out ClipboardSnapshot snapshot)
+    static bool CaptureLocked(out ClipboardSnapshot snapshot, Func<bool>? canRead = null)
     {
         var formats = new Dictionary<uint, byte[]>();
         snapshot = new(formats);
         long total = 0;
         uint previous = 0;
         while (true) {
+            if (canRead != null && !canRead()) return false;
             Marshal.SetLastPInvokeError(0);
             uint format = EnumClipboardFormats(previous);
             if (format == 0) return Marshal.GetLastPInvokeError() == 0;
@@ -106,8 +166,16 @@ internal static class SafeClipboard
     }
 
     public static ClipboardRestoreResult RestoreIfOwned(ClipboardSnapshot snapshot, uint sequence)
+        => RestoreIfOwned(snapshot, sequence, Owner);
+
+    public static Task<ClipboardRestoreResult> RestoreIfOwnedAsync(ClipboardSnapshot snapshot, uint sequence)
     {
         var owner = Owner;
+        return Task.Run(() => RestoreIfOwned(snapshot, sequence, owner));
+    }
+
+    static ClipboardRestoreResult RestoreIfOwned(ClipboardSnapshot snapshot, uint sequence, nint owner)
+    {
         if (owner == 0 || !OpenClipboard(owner)) return ClipboardRestoreResult.BusyOrFailed;
         try {
             if (NativeMethods.GetClipboardSequenceNumber() != sequence) return ClipboardRestoreResult.ChangedByUser;
@@ -116,7 +184,7 @@ internal static class SafeClipboard
         finally { CloseClipboard(); }
     }
 
-    static bool WriteLocked(IReadOnlyDictionary<uint, byte[]> formats)
+    static bool WriteLocked(IReadOnlyDictionary<uint, byte[]> formats, Func<bool>? beginWrite = null)
     {
         // Allocate every format before emptying, so allocation failure leaves the
         // original clipboard untouched. Windows takes ownership only after Set succeeds.
@@ -131,6 +199,7 @@ internal static class SafeClipboard
                 try { Marshal.Copy(bytes, 0, pointer, bytes.Length); }
                 finally { GlobalUnlock(memory); }
             }
+            if (beginWrite != null && !beginWrite()) return false;
             if (!EmptyClipboard()) return false;
             foreach (var format in handles.Keys.ToArray()) {
                 if (SetClipboardData(format, handles[format]) == 0) return false;
@@ -139,5 +208,28 @@ internal static class SafeClipboard
             return true;
         }
         finally { foreach (var memory in handles.Values) GlobalFree(memory); }
+    }
+}
+
+internal sealed class ClipboardWritePermission(CancellationToken cancellationToken, int timeoutMs)
+{
+    readonly object gate = new();
+    readonly long expires = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * (timeoutMs / 1000d));
+    bool writing, abandoned;
+    public bool Expired => Stopwatch.GetTimestamp() >= expires;
+    public bool CanRead { get { lock (gate) return !abandoned && !cancellationToken.IsCancellationRequested && !Expired; } }
+    public bool TryBeginWrite()
+    {
+        lock (gate) {
+            if (abandoned || cancellationToken.IsCancellationRequested || Expired) return false;
+            writing = true; return true;
+        }
+    }
+    public bool AbandonBeforeWrite()
+    {
+        lock (gate) {
+            if (writing) return false;
+            abandoned = true; return true;
+        }
     }
 }

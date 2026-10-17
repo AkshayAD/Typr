@@ -1,5 +1,6 @@
 using System.Collections.Specialized;
 using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
@@ -90,6 +91,90 @@ public sealed class DeliveryIntegrationTests(WpfFixture fixture) : IDisposable
         Assert.Equal("Own app editor", editor.Text);
         tracker.Clear();
         Assert.Null(await tracker.RefreshAsync());
+    });
+
+    [Fact] public Task ForegroundCaptureWaitsForBusyPollGateAndCapturesFreshExternalField() => OnUi(async () => {
+        using var owner = new ClipboardOwner();
+        using var target = await ExternalTarget.StartAsync();
+        var gate = (SemaphoreSlim)typeof(ClipboardDelivery).GetField("CaptureGate", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+        Assert.True(await gate.WaitAsync(TimeSpan.FromSeconds(5)));
+        bool held = true;
+        try {
+            var capture = ClipboardDelivery.CaptureTargetAsync(target.Handle, CancellationToken.None, 1500);
+            await Task.Delay(80);
+            Assert.False(capture.IsCompleted); // A poll collision must wait, not return an unconfirmed target.
+            gate.Release(); held = false;
+            var captured = await capture.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.True(captured.Editable);
+            Assert.NotNull(captured.RuntimeId);
+            Assert.Equal(target.Handle, captured.Window);
+            Assert.Equal(1, gate.CurrentCount);
+        }
+        finally { if (held) gate.Release(); }
+    });
+
+    [Fact] public Task CaptureGateTimeoutAndCancellationDoNotQueueLateWorkers() => OnUi(async () => {
+        using var owner = new ClipboardOwner();
+        using var target = await ExternalTarget.StartAsync();
+        var gate = (SemaphoreSlim)typeof(ClipboardDelivery).GetField("CaptureGate", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+        Assert.True(await gate.WaitAsync(TimeSpan.FromSeconds(5)));
+        try {
+            var elapsed = Stopwatch.StartNew();
+            var captured = await ClipboardDelivery.CaptureTargetAsync(target.Handle, CancellationToken.None, 150);
+            Assert.False(captured.Editable);
+            Assert.Null(captured.RuntimeId);
+            Assert.InRange(elapsed.ElapsedMilliseconds, 75, 1000);
+            Assert.Equal(0, gate.CurrentCount);
+            using var cancellation = new CancellationTokenSource(50);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                ClipboardDelivery.CaptureTargetAsync(target.Handle, cancellation.Token, 1500));
+            Assert.Equal(0, gate.CurrentCount);
+        }
+        finally { gate.Release(); }
+        await Task.Delay(200);
+        Assert.Equal(1, gate.CurrentCount); // No timed-out waiter can later take ownership.
+        Assert.True((await ClipboardDelivery.CaptureTargetAsync(target.Handle, CancellationToken.None, 1000)).Editable);
+        Assert.Equal(1, gate.CurrentCount);
+    });
+
+    [Fact] public Task KeyboardPasteLastCapturesCurrentFieldWhileBarStillRejectsStaleTrackedField() => OnUi(async () => {
+        using var owner = new ClipboardOwner();
+        using var clipboard = new ClipboardScope();
+        clipboard.SeedRichData();
+        using var target = await ExternalTarget.StartAsync();
+        var captured = await ClipboardDelivery.CaptureTargetAsync(target.Handle, CancellationToken.None);
+        Assert.True(captured.Editable);
+        var directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "Typr-keyboard-paste-" + Guid.NewGuid().ToString("N"));
+        var window = new MainWindow(System.IO.Path.Combine(directory, "settings"), System.IO.Path.Combine(directory, "local"), desktopIntegration: false);
+        try {
+            const string text = "Synthetic fresh keyboard repeat paste";
+            const BindingFlags hidden = BindingFlags.Instance | BindingFlags.NonPublic;
+            typeof(MainWindow).GetField("_latest", hidden)!.SetValue(window, text);
+            var tracker = (ExternalTargetTracker)typeof(MainWindow).GetField("_externalTargets", hidden)!.GetValue(window)!;
+            var stale = captured with { RuntimeId = [int.MinValue, 42] };
+            typeof(ExternalTargetTracker).GetField("current", hidden)!.SetValue(tracker, stale);
+            // Model a periodic refresh already in flight: RefreshAsync returns
+            // Current immediately, even when its runtime identity is outdated.
+            typeof(ExternalTargetTracker).GetField("refreshing", hidden)!.SetValue(tracker, 1);
+            Assert.Same(stale, await tracker.RefreshAsync());
+            var command = typeof(MainWindow).GetMethod("CompanionActionAsync", hidden)!;
+            await (Task)command.Invoke(window, ["PasteLast", true])!;
+            Assert.Empty(await target.ReadAsync());
+            Assert.Same(stale, tracker.Current);
+            await (Task)command.Invoke(window, ["PasteLast", false])!;
+            Assert.Equal(text, await target.ReadAsync());
+            Assert.Contains("Pasted and verified", ((TextBlock)window.FindName("StatusText")).Text);
+            Assert.Equal(target.Handle, NativeMethods.GetForegroundWindow());
+            Assert.Equal("Synthetic clipboard seed", Clipboard.GetText());
+            Assert.True(Clipboard.ContainsData(clipboard.Marker));
+            Assert.False(window.IsVisible);
+        }
+        finally {
+            var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            window.Closed += (_, _) => closed.TrySetResult();
+            window.Close(); await closed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (System.IO.Directory.Exists(directory)) System.IO.Directory.Delete(directory, recursive: true);
+        }
     });
 
     [Fact] public Task UiaDocumentAllowsWritableTextAndRejectsReadonlyAndPasswords() => OnUi(async () => {
