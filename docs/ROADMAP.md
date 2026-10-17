@@ -1,5 +1,7 @@
 # Usability roadmap
 
+The current design specification is [Product and UI/UX plan](PRODUCT_DESIGN_PLAN.md), with delivered work and verification recorded in [Implementation status](IMPLEMENTATION_STATUS.md). The modern native shell, working appearance/caption preferences, vocabulary/snippets and opt-in history are implemented. The remaining milestones below still need release evidence.
+
 ## Next: prove the Windows loop
 
 Validate microphone, cancellation, safe insertion and clipboard restoration in a disposable text field before adding more features. Keep transcript recovery through Copy result prominent.
