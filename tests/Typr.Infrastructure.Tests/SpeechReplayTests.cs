@@ -4,6 +4,7 @@ using NAudio.Wave;
 using Xunit;
 using Xunit.Abstractions;
 using System.Diagnostics;
+using SherpaOnnx;
 
 namespace Typr.Infrastructure.Tests;
 
@@ -42,7 +43,7 @@ public sealed class SpeechReplayTests(ITestOutputHelper output)
             output.WriteLine($"Synthetic replay stop: {stopClock.Elapsed.TotalMilliseconds:F1}ms; final characters={result.Length}.");
             output.WriteLine($"Synthetic replay captured frames={speech.CapturedSampleCount}; fixture frames={reader.Length/2}.");
             Assert.Equal(reader.Length/2,speech.CapturedSampleCount);
-            Assert.True(result.Length >= 20, "The real model must return a meaningful synthetic transcript.");
+            Assert.Equal("Hello from TYPR today is a good day to turn ideas into words", result);
             Assert.Contains(first, captions);
 
             int cancelled = speech.StartRecording();
@@ -63,5 +64,74 @@ public sealed class SpeechReplayTests(ITestOutputHelper output)
             Assert.Empty(errors);
         }
         finally { Environment.SetEnvironmentVariable("TYPR_REPLAY_WAV", previous); }
+    }
+
+    [ModelReplayFact]
+    public async Task ReleaseBeforeAnyPartialDrainsTheLastWordWithoutFixtureTrailingSilence()
+    {
+        string model=Environment.GetEnvironmentVariable("TYPR_TEST_MODEL")!;
+        using var reader=new WaveFileReader(Environment.GetEnvironmentVariable("TYPR_TEST_WAV")!);
+        var bytes=new byte[reader.Length]; reader.ReadExactly(bytes);
+        var samples=Enumerable.Range(0,bytes.Length/2).Select(i=>BitConverter.ToInt16(bytes,i*2)/32768f).ToArray();
+        // The old fixture includes almost 800ms of trailing quiet. Keep just
+        // 10ms after its final audible sample so that silence cannot mask loss.
+        int last=Array.FindLastIndex(samples,sample=>Math.Abs(sample)>.0005f);
+        Assert.True(last>=0);
+        samples=samples[..Math.Min(samples.Length,last+161)];
+        var config=new OnlineRecognizerConfig();
+        config.FeatConfig.SampleRate=16000; config.FeatConfig.FeatureDim=80;
+        config.ModelConfig.Transducer.Encoder=Path.Combine(model,"encoder.int8.onnx");
+        config.ModelConfig.Transducer.Decoder=Path.Combine(model,"decoder.int8.onnx");
+        config.ModelConfig.Transducer.Joiner=Path.Combine(model,"joiner.int8.onnx");
+        config.ModelConfig.Tokens=Path.Combine(model,"tokens.txt");
+        config.ModelConfig.NumThreads=2; config.ModelConfig.Provider="cpu";
+        config.DecodingMethod="greedy_search"; config.EnableEndpoint=0;
+        using var recognizer=new OnlineRecognizer(config);
+        using var decodeGate=new ManualResetEventSlim();
+        var entered=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var input=new BoundaryCapture();
+        using var session=new SpeechSession(()=>new BlockedNativeStream(recognizer,entered,decodeGate),()=>input);
+        int partials=0; session.Caption+=text=>{ if(!string.IsNullOrWhiteSpace(text)) Interlocked.Increment(ref partials); };
+        try {
+            session.StartRecording(); await input.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            input.Emit(samples[..8960]);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            for(int offset=8960;offset<samples.Length;offset+=320)
+                input.Emit(samples.AsSpan(offset,Math.Min(320,samples.Length-offset)).ToArray());
+            Assert.Equal(0,Volatile.Read(ref partials));
+            var stopping=session.StopRecordingAsync();
+            await Task.Delay(350); // The stop is queued while native decoding lags.
+            Assert.False(stopping.IsCompleted);
+            decodeGate.Set();
+            string result=await stopping.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.Equal(samples.Length,session.CapturedSampleCount);
+            Assert.True(input.Disposed);
+            Assert.Equal("Hello from TYPR today is a good day to turn ideas into words",result);
+            output.WriteLine($"Immediate release: {samples.Length} admitted frames; complete final words retained with no pre-release partial.");
+        } finally { decodeGate.Set(); }
+    }
+
+    sealed class BoundaryCapture:IMicrophoneCapture
+    {
+        public event Action<float[]>? Samples;
+        public event Action<Exception>? Failed { add {} remove {} }
+        public TaskCompletionSource Started {get;}=new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool Disposed {get;private set;}
+        public void Start()=>Started.TrySetResult();
+        public void Emit(float[] samples)=>Samples?.Invoke(samples);
+        public void Stop() {}
+        public void Dispose()=>Disposed=true;
+    }
+    sealed class BlockedNativeStream(OnlineRecognizer recognizer,TaskCompletionSource entered,ManualResetEventSlim gate):ISpeechStream
+    {
+        readonly SherpaSpeechStream stream=new(recognizer);
+        public void Accept(float[] samples)=>stream.Accept(samples);
+        public void InputFinished()=>stream.InputFinished();
+        public string Decode() {
+            entered.TrySetResult();
+            if(!gate.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Synthetic decode gate timed out.");
+            return stream.Decode();
+        }
+        public void Dispose()=>stream.Dispose();
     }
 }

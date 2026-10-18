@@ -9,7 +9,7 @@ The display is a partial transcript, not the recording boundary. Releasing the s
 Reproducible defects and repairs:
 
 - Audio callbacks previously shared a 256-item work queue with inference/control actions. A blocked decoder plus 300 short callbacks exhausted that queue. Captured PCM now has its own FIFO, bounded to 120 seconds of *pending* audio, with one scheduled drain wake. Each callback-sized decode yields to control work. Stop closes capture before draining the remaining backlog; cancellation invalidates the generation and clears it.
-- Stop waits for the source's recording thread and flushes converter samples before retiring the input epoch. The recognizer drains all admitted samples and its partial block before `InputFinished`. Cancellation never revives a previous recording.
+- Stop waits for the source's recording thread and flushes converter samples before retiring the input epoch. The recognizer drains all admitted samples before `InputFinished`. Cancellation never revives a previous recording.
 - Packetized resampling accumulated extra samples: a one-second 44.1/48 kHz input could become 16,086/16,117 samples. Cumulative duration accounting plus final converter flushing now produces exactly 16,000 output samples for a one-second input. Whole and irregularly packetized inputs were compared separately.
 - A new rejected physical chord during finalization could subsequently cancel the previous recording. Cancelled/mode updates from that rejected chord now leave the previous finalization alone. The separate Escape path can still cancel it deliberately.
 - Prepared capture no longer waits for asynchronous UIA destination discovery. Delivery retains the original key-down capture task; it does not silently retarget later.
@@ -50,8 +50,8 @@ Native checks observed **96 by 16** during listening with separate live text, **
 
 ## Verification and limits
 
-- Infrastructure Release: **113 passed, zero skipped**, including real-model replay, backlog/drain, sample counts, converter flush and cancellation/restart tests.
-- Latest Windows Release after Silk selection: **119 passed, zero skipped**, including nine recording-state regressions, compact/scaled activity geometry, popup overflow/menu toggle, bar gestures, native delivery/focus and nonactivation checks.
+- Latest Infrastructure Release: **123 passed, zero skipped**, including real-model replay, native capture stop/drain, direct streaming, backlog/drain, sample counts, converter flush and cancellation/restart tests.
+- Latest Windows Release: **122 passed, zero skipped**, including three readiness checks, nine recording-state regressions, compact/scaled activity geometry, popup overflow/menu toggle, bar gestures, native delivery/focus and nonactivation checks.
 - Corrected the paced replay harness to follow absolute elapsed time. It now admits all **94,640 frames**; the old relative-delay harness could stop after about 77% of the fixture. Complete final words are now asserted on initial and recovery recordings.
 - One complete synthetic stop observation was **843.6 ms**, including the 300 ms ending tail. It is not a controlled improvement percentage or a human dictation measurement.
 - Native replay-to-external-field check pasted the entire synthetic sentence, including its last word, and reported **Pasted and verified** with AI off. The prior session also verified that sentence and paste-last in Edge.
@@ -61,3 +61,31 @@ Native checks observed **96 by 16** during listening with separate live text, **
 - One small compatible English model was measured against the current recognizer. It saved resources but misheard the opening, so the default remains unchanged. See [model research](ENGLISH_MODEL_RESEARCH.md).
 
 A fresh physical hold-release test with the user's natural voice is still needed to assess these fixes against the reported experience. No synthetic fixture can establish that their English/Hinglish accuracy now meets the desired standard. Calls, Bluetooth playback, sustained gaming impact, accessibility and mixed-DPI transitions retain their separate checklist in [deferred tests](DEFERRED_DESKTOP_TESTS.md).
+
+## Follow-up: release still loses the ending
+
+The user confirmed insertion works, but ending words still disappear when releasing before the partial transcript catches up. The prior replay fixture had approximately **790 ms of trailing quiet**, and its timed test waited a further 800 ms; that successful test did not establish the immediate-release case.
+
+The new real-model regression removes that trailing cushion, blocks the first native decode, feeds all remaining speech, and requests Stop while **no partial text has appeared**. It requires all admitted frames and the exact complete sentence, including `ideas into words`. It passed before the new hardware fix, narrowing the confirmed remaining gap to capture rather than proving that recognition itself discards admitted audio.
+
+NAudio 2.2.1's `WasapiCapture` stop loop exits before its next packet read, then stops the native client without draining unread packets. Joining that thread and flushing the converter cannot recover packets never delivered to it. This is a real gap, although ordinary short packet loss alone does not prove the cause of every reported missing word. [Pinned capture implementation](https://raw.githubusercontent.com/naudio/NAudio/v2.2.1/NAudio.Wasapi/WasapiCapture.cs).
+
+Typr now uses a small shared-mode capture loop through NAudio's public native interfaces. One capture thread creates, initializes, starts, stops, drains and disposes its source. Stop freezes the stream, drains its remaining buffers, releases every acquired packet, flushes conversion, and only then releases the session's stop fence. Start waits for the actual native start. Device choice, Windows defaults/mute and the existing 300 ms release tail are unchanged. [Microsoft Stop contract](https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-stop), [packet ownership contract](https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudiocaptureclient-getbuffer).
+
+Six new tests cover a final packet unread at stop, silent frames, final interpolation output, native thread ownership, actual-start synchronization and failure cleanup. The packet test requires the exact nonzero ending samples to reach the recognizer before `InputFinished`; earlier callback-level fakes could not detect this gap. A separate converter audit found at most two un-emitted samples across seven input rates, ruling out a multiword converter backlog in those cases. The combined Infrastructure Release suite passed **123 tests, zero skipped**, including both real-model replay tests and the streaming checks below. Independent review found no actionable issues.
+
+The new native source also passed an actual microphone lifecycle check in a no-retention, AI-off profile: prepared and idle stayed off, deliberate start reached Listening with capture active, and finish closed capture while recognition was still busy. Silent finalization returned to idle/off without an input error. Listening and finishing both stayed 96 by 16 DIPs. This establishes basic capture lifecycle, not natural-voice accuracy or the user's exact physical hold/release case.
+
+## Lower latency and clearer preparation
+
+Typr previously accumulated 8,960 samples (560 ms) before feeding the recognizer, which already buffers its own model windows. Captured blocks now reach the recognizer directly in order. Identical caption events are suppressed until the text changes, with the cache reset for each recording. Final padding, `InputFinished`, saved PCM, cancellation and generation boundaries remain unchanged.
+
+A bounded four-thread synthetic comparison used the same pinned Nemotron model and audio, with two baseline runs and two direct-feed runs. First meaningful text appeared after **26,880 input frames / 1,680 ms** with the old batching and **19,840 frames / 1,240 ms** with direct 320-frame feeding: **440 ms earlier in input-audio time**. The complete ending appeared at 5,600 versus 5,160 ms. Every run returned the exact complete sentence and made 12 native model decode calls. These input boundaries do not establish a 440 ms wall-clock gain for every microphone recording, accented-human quality, energy use or gaming impact. The ignored audit source is `artifacts/streaming-cadence-audit/Program.cs`.
+
+Three new streaming tests verify immediate small-block admission, exact ending PCM before finalization, unchanged-caption suppression and cache reset between generations. No recognition model, thread setting or provider preference was changed.
+
+The workspace now distinguishes an installed model from a prepared model. **Prepare speech** loads the model without opening input. Once prepared, the shortcut-only hero focuses practice and explains **Hold Ctrl + Alt**; optional button recording remains explicitly gated. Settings explains that **Unload speech** releases model memory, adds loading time to the next dictation and does not mute Windows. Three readiness checks cover installed/unloaded, prepared shortcut-only and missing-model paths. Their dummy model files are sparse to avoid allocating a real model's worth of disk space.
+
+For daily use, keep the model prepared and use live captions for early feedback. AI polishing runs after local recognition; it adds provider/process/network time before the final insertion. The existing Raw chord bypasses AI for the fastest path. Keep the selected low-effort Luna default for polished output rather than silently lowering quality. Avoid extra model requests or explanatory output, consistent with [OpenAI's latency guidance](https://developers.openai.com/api/docs/guides/latency-optimization). Final authenticated provider latency and natural-voice accuracy still need a representative user test.
+
+The combined self-contained build was published and opened with the normal profile. The installed/unloaded workspace visibly offered Prepare speech; clicking it reached **SPEECH READY / MICROPHONE OFF**, with the practice field focused. No recording was started in the normal profile. This leaves the physical immediate-release check ready for the user.

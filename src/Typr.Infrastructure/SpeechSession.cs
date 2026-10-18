@@ -12,7 +12,6 @@ public sealed class SpeechSession : IDisposable
     readonly Func<IMicrophoneCapture> createCapture;
     readonly BlockingCollection<Action> work = new(256);
     readonly Task worker;
-    readonly List<float> pending = new();
     internal const int MaximumBufferedAudioSamples = 16000 * 120;
     readonly object audioGate = new();
     readonly Queue<(int Generation, float[] Samples)> capturedAudio = new();
@@ -22,6 +21,7 @@ public sealed class SpeechSession : IDisposable
     long admittedSamples;
     internal long CapturedSampleCount => Interlocked.Read(ref admittedSamples);
     ISpeechStream? stream;
+    string? lastCaption;
     IMicrophoneCapture? capture;
     SavedAudioRecording? recording;
     volatile bool disposed;
@@ -161,7 +161,6 @@ public sealed class SpeechSession : IDisposable
                 cancellationToken.ThrowIfCancellationRequested();
                 if(!generationGate.IsCurrent(stoppingGeneration)) { result.TrySetCanceled(new CancellationToken(true)); return; }
                 if(faulted) throw new InvalidOperationException("Audio capture failed; nothing was pasted.");
-                if(pending.Count>0) { var tail=pending.ToArray(); pending.Clear(); stream.Accept(tail); }
                 stream.Accept(new float[16000]); stream.InputFinished();
                 var text=Decode().Trim();
                 cancellationToken.ThrowIfCancellationRequested();
@@ -252,10 +251,10 @@ public sealed class SpeechSession : IDisposable
     void Accept(float[] samples)
     {
         recording?.WriteSamples(samples);
-        pending.AddRange(samples);
-        while(pending.Count>=8960) { var chunk=pending.GetRange(0,8960).ToArray(); pending.RemoveRange(0,8960); stream!.Accept(chunk); Decode(); }
+        stream!.Accept(samples);
+        Decode();
     }
-    string Decode() { var text=stream!.Decode(); if(generationGate.IsCurrent(activeEpoch)) { CaptionForRecording?.Invoke(activeEpoch,text); Caption?.Invoke(text); } return text; }
+    string Decode() { var text=stream!.Decode(); if(generationGate.IsCurrent(activeEpoch) && text!=lastCaption) { lastCaption=text; CaptionForRecording?.Invoke(activeEpoch,text); Caption?.Invoke(text); } return text; }
     void CloseCapture()
     {
         replayCancellation?.Cancel(); replayCancellation?.Dispose(); replayCancellation=null;
@@ -278,7 +277,7 @@ public sealed class SpeechSession : IDisposable
             finally {
                 try { stream?.Dispose(); }
                 finally {
-                    stream=null; pending.Clear();
+                    stream=null; lastCaption=null;
                     lock(audioGate) { capturedAudio.Clear(); bufferedAudioSamples=0; audioDrainQueued=false; }
                 }
             }

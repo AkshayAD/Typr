@@ -122,10 +122,21 @@ public partial class MainWindow : Window
         _navigating = false;
     }
     private void Setup_Click(object sender, RoutedEventArgs e) => Navigate("Settings");
-    private void Hero_Click(object sender, RoutedEventArgs e)
+    private async void Hero_Click(object sender, RoutedEventArgs e)
     {
-        if (_speech == null || _speechFaulted) Navigate("Settings");
-        else { Navigate("Workspace"); PracticeBox.Focus(); Practice_Click(sender, e); }
+        if (_loading || _busy || _recording || _recordingStart != null) return;
+        if (_speech != null && (_speechFaulted || ReferenceEquals(sender, ReadinessActionButton))) Navigate("Settings");
+        else if (_speech == null)
+        {
+            if (ModelDownload.IsReady(ModelPathBox.Text.Trim())) await LoadSpeechAsync(focusPractice: true);
+            else Navigate("Settings");
+        }
+        else
+        {
+            Navigate("Workspace"); PracticeBox.Focus();
+            if (_settings.AllowButtonRecording) Practice_Click(sender, e);
+            else StatusText.Text = ShortcutStatus.Text = "Hold Ctrl + Alt to turn the microphone on and talk. Release either key to finish; Esc cancels.";
+        }
     }
 
     private bool PersistSettings(AppSettings settings)
@@ -374,15 +385,17 @@ public partial class MainWindow : Window
     private void RefreshReadiness()
     {
         bool ready = _speech != null && !_loading && !_speechFaulted;
+        bool installed = _speech != null || ModelDownload.IsReady(ModelPathBox.Text.Trim());
         bool starting = _recordingStart != null;
         bool listening = _recording && _inputActive && _activeInputGeneration == _speechGeneration;
         if (_hook != null) _hook.CancellationActive = _recording || _busy || starting;
         InputDeviceBox.IsEnabled = RefreshInputsButton.IsEnabled = !_loading && _speech == null && !starting;
         RailStatus.Text = _inputActive ? (listening ? "Microphone active" : "Closing microphone…") : _recording ? "Starting microphone…" : _loading ? "Preparing speech…" : _speechFaulted && _speech != null ? "Speech needs attention" : "Microphone off";
-        HeroButton.Content = ready ? "Try dictation  →" : "Set up Typr  →";
-        HeroButton.IsEnabled = !_loading && !_busy && !_recording && !starting;
-        ReadinessTitle.Text = _speechFaulted && _speech != null ? "Speech needs a fresh start." : ready ? "Ready when you press the shortcut." : "Your voice, at home on your PC.";
-        ReadinessDetail.Text = _speechFaulted && _speech != null ? "Unload speech in Settings, check the selected input, then prepare it again." : ready ? "The model stays prepared in memory. Your microphone opens only during dictation and closes when you finish or cancel." : "Download the speech model in Settings. Your recording shortcut prepares it when needed; wait for Listening before speaking on first use.";
+        HeroButton.Content = ready ? (_settings.AllowButtonRecording ? "Try dictation  →" : "Try the shortcut  →") : installed && _speech == null ? "Prepare speech  →" : "Set up Typr  →";
+        HeroButton.IsEnabled = ReadinessActionButton.IsEnabled = !_loading && !_busy && !_recording && !starting;
+        ReadinessActionButton.Content = installed && _speech == null ? "Prepare speech" : "Open setup";
+        ReadinessTitle.Text = _speechFaulted && _speech != null ? "Speech needs a fresh start." : _loading ? "Updating speech…" : ready ? "Speech ready. Microphone off until dictation." : installed ? "Speech model installed. Ready to prepare." : "Your voice, at home on your PC.";
+        ReadinessDetail.Text = _speechFaulted && _speech != null ? "Unload speech in Settings, check the selected input, then prepare it again." : ready ? "Keep speech prepared for quicker starts. Hold Ctrl + Alt to turn the microphone on; release to finish. Wait for Listening before speaking." : installed ? "Prepare speech to load the model into memory with the microphone off. Your recording shortcut can also prepare it; the first start takes longer." : "Download the speech model once in Settings. Then prepare speech for quicker starts, or hold Ctrl + Alt and wait for Listening before speaking.";
         PracticeButton.IsEnabled = !_busy && !starting && (_recording || ready && _settings.AllowButtonRecording);
         PracticeButton.Content = starting ? "Preparing…" : _busy ? "Finishing…" : _recording ? "Finish dictation" : _settings.AllowButtonRecording ? "Start dictation" : "Use recording shortcut";
         CancelButton.Visibility = _recording || _busy || starting ? Visibility.Visible : Visibility.Collapsed;
