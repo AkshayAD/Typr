@@ -23,8 +23,8 @@ Speech recognition stays local. Enabling AI polish sends recognized text to the 
 ## Automated evidence
 
 - Latest Core Release suite: **188 passed**.
-- Infrastructure Release suite including real-model synthetic replay: **101 passed, zero skipped**. Includes 16 fake microphone lifecycle cases and paced native recognition/cancellation/restart.
-- Latest full Windows Release suite: **102 passed, zero skipped**, including eight native focus/delivery cases, the nonactivating window check, eight clipboard transaction cases and the minimal bar checks.
+- Infrastructure Release suite including real-model synthetic replay: **113 passed, zero skipped**. Includes pending-audio drain, converter duration/flush, microphone lifecycle and complete-frame recognition/cancellation/restart.
+- Latest full Windows Release suite: **114 passed, zero skipped**, including recording-state regressions, native focus/delivery cases, nonactivation, clipboard transactions and bar polish/gesture checks.
 - Actual shared microphone start/finish/cancel/unload and same-display bar hover/background/icon dragging were observed. Real recognizer replay automatically pasted the full sentence into Edge once; paste-last appended exactly one further copy. Both were verified by Typr and independent browser value reads. See the desktop evidence for scope.
 - Windows Release build and self-contained x64 publish passed. This remains a development preview, not a public signed release.
 - Focused security review after repairs: 30 provider tests passed; 13 prompt/output tests are included in the Core suite.
@@ -62,6 +62,8 @@ Review and regression checks repaired stale provider dropdowns, saved reasoning 
 - No merge or production deployment is part of this change.
 
 ## Desktop follow-up
+
+The human hold-to-talk check returned text but exposed lost ending audio and poor perceived quality/latency. The subsequent [reliability and bar refinement](DICTATION_RELIABILITY_AND_BAR_REFINEMENT.md) fixes reproduced queue overflow, final converter samples, packetized resampling duration and rejected-chord cancellation. Complete-frame synthetic recognition/paste passed; fresh human accuracy remains unverified. The native bar now uses vector icons, custom delayed hints, 220 ms growth, control fades and active audio/processing motion. Three visual directions are prepared for user selection; they are previews rather than three native bar modes.
 
 The user resumed testing. The full native Windows suite, actual microphone lifecycle, same-display pill mouse interaction and a real recognizer-to-browser-paste flow passed. The session repaired background focus-capture contention, stale keyboard repeat-paste targets and dispatcher-blocking clipboard reads. See [desktop verification evidence](DESKTOP_VALIDATION_2026-10-18.md) for exact scope and remaining physical/hardware checks.
 

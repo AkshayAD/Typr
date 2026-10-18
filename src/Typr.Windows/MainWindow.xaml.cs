@@ -330,7 +330,7 @@ public partial class MainWindow : Window
                     }
                 });
             };
-            loaded.Level += level => Dispatcher.BeginInvoke(() => { if (!_closing && _recording && ReferenceEquals(_speech, loaded)) { MicLevel.Value = level; _overlay.Level(level); } });
+            loaded.Level += level => Dispatcher.BeginInvoke(() => { if (!_closing && _recording && ReferenceEquals(_speech, loaded)) { MicLevel.Value = level; _overlay.Level(level); _dictationBar.UpdateLevel(level); } });
             loaded.Error += message => Dispatcher.BeginInvoke(() =>
             {
                 if (_closing || !ReferenceEquals(_speech, loaded)) return;
@@ -386,7 +386,7 @@ public partial class MainWindow : Window
         PracticeButton.IsEnabled = !_busy && !starting && (_recording || ready && _settings.AllowButtonRecording);
         PracticeButton.Content = starting ? "Preparing…" : _busy ? "Finishing…" : _recording ? "Finish dictation" : _settings.AllowButtonRecording ? "Start dictation" : "Use recording shortcut";
         CancelButton.Visibility = _recording || _busy || starting ? Visibility.Visible : Visibility.Collapsed;
-        CaptureState.Text = starting ? "PREPARING TO LISTEN" : _recording ? (listening ? "LISTENING" : "STARTING MICROPHONE") : _inputActive ? "CLOSING MICROPHONE" : _busy ? "FINISHING YOUR WORDS" : _speechFaulted && _speech != null ? "SPEECH NEEDS ATTENTION" : ready ? "SPEECH READY / MICROPHONE OFF" : "MICROPHONE OFF";
+        CaptureState.Text = starting ? "PREPARING TO LISTEN" : _recording ? (listening ? "LISTENING" : "STARTING MICROPHONE") : _inputActive ? "CLOSING MICROPHONE" : _busy ? _processingPhase.ToUpperInvariant() : _speechFaulted && _speech != null ? "SPEECH NEEDS ATTENTION" : ready ? "SPEECH READY / MICROPHONE OFF" : "MICROPHONE OFF";
         RefreshCompanionState();
     }
     private async void Practice_Click(object sender, RoutedEventArgs e)
@@ -414,18 +414,24 @@ public partial class MainWindow : Window
                     _ = StartCaptureAsync(update.Mode, foreground, practice);
                     break;
                 case HotkeyAction.ModeChanged:
+                    if (!_recording && _recordingStart == null) break;
                     _mode = _startingMode = update.Mode;
                     if (_mode == DictationMode.VoiceEdit) { CancelCapture(); StatusText.Text = "Voice editing isn't available. Nothing new was inserted."; }
                     else ShortcutStatus.Text = "Raw mode · release Ctrl or Alt to finish.";
                     break;
-                case HotkeyAction.HandsFreeEnabled: ShortcutStatus.Text = "Hands-free · Ctrl + Alt finishes; Esc cancels."; break;
+                case HotkeyAction.HandsFreeEnabled:
+                    if (_recording || _recordingStart != null) ShortcutStatus.Text = "Hands-free · Ctrl + Alt finishes; Esc cancels.";
+                    break;
                 case HotkeyAction.Stopped: CancelPendingRecordingStart(); _ = FinishCaptureAsync(); RefreshReadiness(); break;
-                case HotkeyAction.Cancelled: if (_recordingStart != null || _recording || _busy) CancelCapture(); break;
+                // A new chord can be rejected while an earlier recording drains.
+                // Its cancellation must not cancel that earlier finalization.
+                // Escape during processing is handled separately by the hook.
+                case HotkeyAction.Cancelled: if (_recordingStart != null || _recording) CancelCapture(); break;
                 case HotkeyAction.PasteLast: _ = PasteLastAsync(foreground); break;
             }
         }
     }
-    private void BeginCapture(DictationMode mode, nint foreground, bool practice = false, DeliveryTarget? destination = null, bool restoreFocus = false)
+    private void BeginCapture(DictationMode mode, nint foreground, bool practice = false, Task<DeliveryTarget>? destination = null, bool restoreFocus = false)
     {
         if (_busy || _recording || _historyOperation != null) { StatusText.Text = "Still finishing the previous operation. Release the keys and try again."; return; }
         if (mode == DictationMode.VoiceEdit) { StatusText.Text = "Voice editing isn't available. Nothing was recorded."; return; }
@@ -434,7 +440,7 @@ public partial class MainWindow : Window
             _operation?.Dispose(); _operation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
             _captureSettings = _settings; _practiceCapture = practice;
             _restoreDeliveryFocus = restoreFocus;
-            _target = practice ? null : destination != null ? Task.FromResult(destination) : ClipboardDelivery.CaptureTargetAsync(foreground, _operation.Token);
+            _target = practice ? null : destination ?? ClipboardDelivery.CaptureTargetAsync(foreground, _operation.Token);
             _mode = mode; _recording = true;
             _speechGeneration = _speech!.StartRecording(); _overlay.Begin(foreground);
             _captureTime.Reset(); _clock.Stop(); CaptureDuration.Text = "Opening microphone…";
@@ -453,6 +459,7 @@ public partial class MainWindow : Window
         bool restoreFocus = _restoreDeliveryFocus;
         string deliveryStatus = practice ? "Practice" : "Paste off";
         var stopwatch = Stopwatch.StartNew();
+        _processingPhase = "Recognizing…";
         CaptureDuration.Text = "Processing…"; StatusText.Text = "Finishing your words on this PC.";
         _overlay.Processing(); ShortcutStatus.Text = "Finishing your words. Esc can still cancel before insertion."; RefreshReadiness();
         try
@@ -460,6 +467,12 @@ public partial class MainWindow : Window
             var raw = await speech.StopRecordingAsync(operation.Token);
             operation.Token.ThrowIfCancellationRequested();
             var prepared = OutputPersonalizer.Transform(raw, clean, _captureSettings.Vocabulary, _captureSettings.Snippets);
+            if (clean && _captureSettings.AiPolishEnabled && !string.IsNullOrWhiteSpace(prepared)) {
+                _processingPhase = "Polishing…";
+                CaptureDuration.Text = "Polishing…";
+                StatusText.Text = "Recognized locally. Polishing punctuation and formatting…";
+                UpdateLiveBarCaption(prepared); RefreshReadiness();
+            }
             var polished = clean ? await PolishTextAsync(prepared, _captureSettings, operation.Token) : new PolishOutcome(prepared, null, null, null, "Raw");
             operation.Token.ThrowIfCancellationRequested();
             if (string.IsNullOrWhiteSpace(polished.Text)) { StatusText.Text = "No speech detected. Your previous transcript is still available. Check the input and try again."; _overlay.Cancel(); return; }
@@ -520,6 +533,7 @@ public partial class MainWindow : Window
     {
         if (_busy || _recording || _historyOperation != null || string.IsNullOrEmpty(_latest)) return;
         _busy = true; _operation?.Dispose(); _operation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        _processingPhase = "Placing your words…";
         var operation = _operation; RefreshReadiness();
         try
         {

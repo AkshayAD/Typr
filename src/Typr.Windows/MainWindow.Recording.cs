@@ -57,11 +57,11 @@ public partial class MainWindow
             var target = practice ? null : ClipboardDelivery.CaptureTargetAsync(foreground, token);
             await LoadSpeechAsync(focusPractice: false);
             token.ThrowIfCancellationRequested();
-            var destination = target == null ? null : await target;
-            token.ThrowIfCancellationRequested();
             if (!ReferenceEquals(_recordingStart, pending) || _closing || _speech == null || _speechFaulted) return;
             _recordingStart = null;
-            BeginCapture(_startingMode, foreground, practice, destination, restoreFocus);
+            // UIA may take hundreds of milliseconds. Preserve the original
+            // capture task for delivery without delaying a prepared microphone.
+            BeginCapture(_startingMode, foreground, practice, target, restoreFocus);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { if (!_closing) StatusText.Text = "Couldn't start dictation: " + ex.Message; }

@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using Typr.Infrastructure;
 using NAudio.Wave;
 using Xunit;
+using Xunit.Abstractions;
+using System.Diagnostics;
 
 namespace Typr.Infrastructure.Tests;
 
@@ -15,7 +17,7 @@ public sealed class ModelReplayFactAttribute : FactAttribute
     }
 }
 
-public sealed class SpeechReplayTests
+public sealed class SpeechReplayTests(ITestOutputHelper output)
 {
     [ModelReplayFact]
     public async Task RealModelRecognizesPacedAudioCancelsFinalizationAndStartsAFreshGeneration()
@@ -35,7 +37,11 @@ public sealed class SpeechReplayTests
             speech.Prepare(); // Uses the explicit synthetic replay path, never the microphone.
             int first = speech.StartRecording();
             await Task.Delay(reader.TotalTime + TimeSpan.FromMilliseconds(800));
+            var stopClock=Stopwatch.StartNew();
             string result = await speech.StopRecordingAsync().WaitAsync(TimeSpan.FromSeconds(30));
+            output.WriteLine($"Synthetic replay stop: {stopClock.Elapsed.TotalMilliseconds:F1}ms; final characters={result.Length}.");
+            output.WriteLine($"Synthetic replay captured frames={speech.CapturedSampleCount}; fixture frames={reader.Length/2}.");
+            Assert.Equal(reader.Length/2,speech.CapturedSampleCount);
             Assert.True(result.Length >= 20, "The real model must return a meaningful synthetic transcript.");
             Assert.Contains(first, captions);
 
@@ -51,6 +57,7 @@ public sealed class SpeechReplayTests
             Assert.NotEqual(first, next);
             await Task.Delay(reader.TotalTime + TimeSpan.FromMilliseconds(800));
             string recovered = await speech.StopRecordingAsync().WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.Equal(reader.Length/2,speech.CapturedSampleCount);
             Assert.Equal(result, recovered);
             Assert.Contains(next, captions);
             Assert.Empty(errors);

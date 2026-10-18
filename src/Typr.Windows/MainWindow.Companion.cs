@@ -16,6 +16,7 @@ public partial class MainWindow
     private bool _desktopIntegration, _companionInitialized, _companionInitializing, _barHoldActive, _restoreDeliveryFocus;
     private int _barHoldGeneration;
     private string _liveCaption = "";
+    private string _processingPhase = "Finishing your words…";
 
     private void InitializeCompanion(bool desktopIntegration)
     {
@@ -91,7 +92,7 @@ public partial class MainWindow
         if (!_companionInitialized || !_desktopIntegration) return;
         _dictationBar.UpdateState(_speech != null && !_speechFaulted && !_loading, _recording, _busy || _loading || _recordingStart != null,
             _settings.LiveCaptionsEnabled && (_recording || _busy) ? _liveCaption : null,
-            _loading || _recordingStart != null ? "Preparing speech…" : _busy ? "Finishing your words…" : _recording ? (_inputActive && _activeInputGeneration == _speechGeneration ? "Listening · Esc cancels" : "Opening microphone…") : _inputActive ? "Closing microphone…" : _speechFaulted && _speech != null ? "Speech needs attention" : _speech != null ? "Ready · microphone off" : "Microphone off");
+            _loading || _recordingStart != null ? "Preparing speech…" : _busy ? _processingPhase : _recording ? (_inputActive && _activeInputGeneration == _speechGeneration ? "Listening · Esc cancels" : "Opening microphone…") : _inputActive ? "Closing microphone…" : _speechFaulted && _speech != null ? "Speech needs attention" : _speech != null ? "Ready · microphone off" : "Microphone off");
     }
     private void UpdateLiveBarCaption(string text) { _liveCaption = text; RefreshCompanionState(); }
     private async Task CloseCompanionAsync()

@@ -17,6 +17,8 @@ internal sealed class SharedMicrophoneCapture : IMicrophoneCapture
 {
     readonly MMDevice device;
     readonly WasapiCapture capture;
+    readonly MicrophoneConverter converter;
+    bool disposed;
     public event Action<float[]>? Samples;
     public event Action<Exception>? Failed;
 
@@ -31,7 +33,7 @@ internal sealed class SharedMicrophoneCapture : IMicrophoneCapture
                 throw new InvalidOperationException("The selected microphone is unavailable. Choose an active input in Settings.");
             capture=new WasapiCapture(device) { ShareMode=AudioClientShareMode.Shared };
             try {
-                var converter=new MicrophoneConverter(capture.WaveFormat);
+                converter=new MicrophoneConverter(capture.WaveFormat);
                 capture.DataAvailable += (_,e) => {
                     try { Samples?.Invoke(converter.Convert(e.Buffer,e.BytesRecorded)); }
                     catch(Exception error) { Failed?.Invoke(error); }
@@ -43,7 +45,18 @@ internal sealed class SharedMicrophoneCapture : IMicrophoneCapture
 
     public void Start() => capture.StartRecording();
     public void Stop() => capture.StopRecording();
-    public void Dispose() { try { capture.Dispose(); } finally { device.Dispose(); } }
+    public void Dispose()
+    {
+        if(disposed) return; disposed=true;
+        try {
+            // NAudio's Dispose joins its recording thread. All final DataAvailable
+            // callbacks precede this converter flush and the session's drain fence.
+            capture.Dispose();
+            var tail=converter.Flush();
+            if(tail.Length>0) Samples?.Invoke(tail);
+        }
+        finally { device.Dispose(); }
+    }
 
     internal static IReadOnlyList<MicrophoneInput> EnumerateInputs()
     {

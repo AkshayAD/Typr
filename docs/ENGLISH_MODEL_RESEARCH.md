@@ -1,6 +1,6 @@
 # Local dictation model research
 
-Checked **2026-10-18** against publisher documentation, publisher model cards, Sherpa's own exports/source, and Microsoft documentation. This is a research shortlist, not a measured ranking. No replacement weights were downloaded, no recognition benchmark ran, and no microphone or desktop interaction occurred during this research.
+Checked **2026-10-18** against publisher documentation, publisher model cards, Sherpa's own exports/source, and Microsoft documentation. This is a research shortlist, not a measured ranking. The initial shortlist used metadata only; the follow-up below records one small downloaded candidate and its separate synthetic test status. No microphone or desktop interaction occurred during this research.
 
 ## Recommendation for this laptop
 
@@ -14,7 +14,7 @@ Keep the working Nemotron model as the quality baseline. For a small, low-risk E
 - Multilingual Whisper Small processed an earlier **5.92-second** synthetic recording in about **8.2 seconds** using two CPU threads. This is a post-recording recovery option, not proof of comfortable live streaming.
 - The current Nemotron ONNX files occupy approximately **631 MiB** locally. The application pins `org.k2fsa.sherpa.onnx` **1.13.8** and currently configures `OnlineRecognizer`, a transducer encoder/decoder/joiner, CPU execution and 16 kHz / 80-feature input.
 
-No alternative in the table has been run on this laptop. Peak working set, process CPU time, battery consumption, finalization latency and recognition accuracy therefore remain unmeasured. Disk weights, archive size and process RAM are different quantities.
+The initial shortlist contained no alternative-model measurements. Any later synthetic comparison is recorded separately below; it cannot establish Indian-English dictation accuracy. Disk weights, archive size and process RAM are different quantities.
 
 ## Shortlist
 
@@ -37,7 +37,7 @@ Archive sizes were checked from [Sherpa's release metadata](https://api.github.c
 
 Read-only inspection of the installed managed assembly and the corresponding upstream tag confirmed:
 
-- `OnlineModelConfig.Transducer` and `OnlineStream.AcceptWaveform`, `InputFinished` and `SetOption(string, string)` exist. This supports the proposed small transducer experiments and the documented Nemotron 3.5 language option. Actual alternative model loading remains untested. [Pinned online model config](https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.8/scripts/dotnet/OnlineModelConfig.cs), [pinned stream API](https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.8/scripts/dotnet/OnlineStream.cs).
+- `OnlineModelConfig.Transducer` and `OnlineStream.AcceptWaveform`, `InputFinished` and `SetOption(string, string)` exist. This supports the proposed small transducer experiments and the documented Nemotron 3.5 language option. The selected Zipformer configuration now loads and decodes through 1.13.8; other alternative model loads remain untested. [Pinned online model config](https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.8/scripts/dotnet/OnlineModelConfig.cs), [pinned stream API](https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.8/scripts/dotnet/OnlineStream.cs).
 - The pinned native source contains Parakeet Unified's streaming implementation. Its preprocessing and buffered context requirements need their own model configuration; changing only the model directory in today's Nemotron configuration is insufficient.
 - `OfflineMoonshineModelConfig` contains `Preprocessor`, `Encoder`, `UncachedDecoder`, `CachedDecoder` and `MergedDecoder`. Upstream's Moonshine v2 C# example explicitly uses `OfflineRecognizer` with an encoder and merged decoder. That does **not** make the newer streaming models drop-in replacements. [Pinned config](https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.8/scripts/dotnet/OfflineMoonshineModelConfig.cs), [pinned C# example](https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.8/dotnet-examples/non-streaming-moonshine-v2-decode-files/Program.cs).
 - Moonshine's own C API exposes streaming creation, audio submission and transcription. A native P/Invoke adapter is technically feasible; it needs separate lifecycle, cancellation, UTF-8/buffer ownership and packaging verification. No official C# binding was established. [Moonshine C API](https://moonshine-voice.readthedocs.io/en/stable/api/c-api/).
@@ -45,6 +45,44 @@ Read-only inspection of the installed managed assembly and the corresponding ups
 ## Hindi and output polish
 
 English-only models should not be selected on the assumption that a text-polishing model can reconstruct Hindi sounds they missed. Keep raw ASR and formatting quality separate in evaluation. For actual Hindi recognition, test Nemotron 3.5 or the existing retained-audio multilingual Whisper path. Roman Hindi is an output-script preference: recognizing Hindi successfully and transliterating its recognized words are separate steps. No code-switching or Roman-Hindi quality guarantee follows from a language being listed.
+
+## Follow-up: poor transcription and one small compatible comparison
+
+The user's report of slow, inaccurate dictation warrants reconsidering both the audio pipeline and the recognizer. A small model can reduce inference work while making word errors worse. Queue backlog, missing audio and premature microphone closure need separate diagnosis; a model comparison cannot excuse those defects. Production model selection and the recognizer adapter remain unchanged during this experiment.
+
+**Selected experiment: Zipformer English 20M, with the exact configuration documented by Sherpa.** Use `encoder-epoch-99-avg-1.int8.onnx`, `decoder-epoch-99-avg-1.onnx` and `joiner-epoch-99-avg-1.int8.onnx` plus `tokens.txt`. The small decoder intentionally stays full precision; Sherpa's published int8 command does this too. This is a particularly low integration risk because it uses the same existing `OnlineRecognizer` transducer API, feature settings and CPU provider. It remains a 2023 model, chosen for a bounded efficiency comparison rather than recency. [Sherpa's model instructions](https://k2-fsa.github.io/sherpa/onnx/pretrained_models/online-transducer/zipformer-transducer-models.html#csukuangfj-sherpa-onnx-streaming-zipformer-en-20m-2023-02-17-english).
+
+The training publisher reports greedy-search WER **3.94% / 9.79%** on LibriSpeech test-clean / test-other. Those are read-speech benchmarks, not this user's accent, short dictated commands, names, background noise, Hindi switching, or a measurement of this quantized export. No controlled evidence here establishes that this model improves Indian-English accuracy over Nemotron. It is sensible to measure its resource/latency tradeoff; it is not sensible to replace the default based on model size alone. [Original model card](https://huggingface.co/desh2608/icefall-asr-librispeech-pruned-transducer-stateless7-streaming-small).
+
+An explicitly Indian-English label is also insufficient evidence of an upgrade: Vosk's publisher lists a 36 MB small Indian-English model with **49.05% WER on NPTEL Pure**. That is a different evaluation corpus and cannot be ranked against the LibriSpeech figures. Vosk also requires a separate recognition adapter. It was not downloaded for this one-candidate experiment. [Vosk publisher model list](https://alphacephei.com/vosk/models).
+
+### Prepared files and reproducibility
+
+Only this one candidate was downloaded into ignored `.models/zipformer20m-int8`. The three model components, token file and Apache-2.0 model card total **45,202,378 bytes (43.1 MiB)**. The documented full-precision decoder accounts for the difference from the earlier approximately 42 MiB all-int8 estimate. The pinned maintainer revision is **`d42f2d9f7ca24806fb667456a18a9f1b60f70d16`**. ONNX files were checked against upstream Git LFS SHA-256 values; the token/model-card bytes were checked against upstream Git blob IDs. A local manifest also records SHA-256 for every selected file. Direct file downloads avoid extracting an archive or executing upstream scripts. [Pinned upstream metadata](https://huggingface.co/api/models/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/revision/d42f2d9f7ca24806fb667456a18a9f1b60f70d16?blobs=true), [maintainer model card](https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/blob/d42f2d9f7ca24806fb667456a18a9f1b60f70d16/README.md).
+
+Ignored local preparation files are in `artifacts/asr-comparison`: `PrepareZipformer.ps1`, `AsrComparison.csproj`, `Program.cs` and `RunComparison.ps1`. The harness builds against the application's pinned Sherpa **1.13.8** and accepts only `nemotron` or `zipformer20m`. It refuses recordings other than the existing `artifacts/synthetic-test.wav`, pinned by SHA-256 `71ef05827093d1be995c395a1ee7798e1a31ee13025382fde8ad42d8000b366c`. No personal recording is read or logged.
+
+Each model runs in a separate process with **two CPU threads, three streams and a 90-second process budget**. Feeding matches the existing baseline harness: unpaced 8,960-sample blocks, final partial-block padding and one second of final silence. Results include model-load wall/CPU time, decode wall/CPU time, finalization time, real-time factor, first partial timing, working set and the synthetic transcript. The first stream and later warm streams are labeled separately. First-partial wall time under unpaced feeding is a throughput observation, not live microphone latency; process peak memory includes model loading and runtime overhead. These ignored local files are preparation artifacts, not a shipped benchmark or a model download feature.
+
+### Measured synthetic comparison
+
+Preparation/build passed without warnings or errors. After the audio worker released the CPU slot, the two models ran sequentially through this same harness, with no concurrent recognition benchmark. Each processed the entire **5.915-second** synthetic WAV three times. Figures below are observations from one short comparison, not statistical performance guarantees. The first stream includes first-use effects; the two later streams are additionally summarized as warm streams.
+
+| Measurement | Zipformer 20M, documented mixed precision | Existing Nemotron 0.6B int8 |
+|---|---:|---:|
+| Model load, one observation | 2,599.6 ms | 4,257.3 ms |
+| Mean decode, all three streams | 500.9 ms | 2,384.4 ms |
+| Mean decode, two warm streams | 459.4 ms | 2,282.1 ms |
+| Mean finalization, included in decode | 83.7 ms | 363.6 ms |
+| Mean process CPU time per stream | 1,656.2 ms | 5,520.8 ms |
+| Mean unpaced real-time factor | 0.085 | 0.403 |
+| Observed process peak working set | 121.0 MiB | 769.2 MiB |
+
+Both models returned the same respective transcript in all three runs. Nemotron returned the complete synthetic sentence, `Hello from TYPR today is a good day to turn ideas into words`. Zipformer returned `U FROM T WIPE P R TO DAY IS A GOOD DAY TO TURN IDEAS INTO WORDS`, corrupting the opening despite retaining most of the main clause. The large resource saving is real in this comparison; an accuracy improvement is not supported. **Do not switch the production default to this candidate based on this result.** No formal WER or accented-human quality score is claimed from this single synthetic example.
+
+The two-thread recognizer setting is not a measured whole-process two-core cap: runtime CPU time can exceed twice the corresponding wall time in these short runs. No claim about CPU percentage, energy use or game-frame impact follows from the setting or this table. The harness is unpaced and bypasses microphone capture, audio queues, UI scheduling and AI polish; its finalization time therefore is not the application's complete stop-to-paste latency. Raw synthetic JSON rows and a sanitized `summary.json` remain in ignored `artifacts/asr-comparison`.
+
+The synthetic fixture reveals a usable integration and an obvious content loss, but cannot resolve accented-human quality. Keep the current model available; choosing a new default requires a small consented local corpus with reference transcripts, including names, numbers and a Hindi/Hinglish subset. Do not upload or retain the user's voice for this experiment. A later Moonshine Small Streaming adapter experiment remains a research option if a newer model's quality/resource tradeoff is needed; this test does not justify downloading or integrating it automatically.
 
 ## Bounded benchmark for the next user-approved idle window
 
@@ -66,4 +104,4 @@ The practical default is a **built-in or USB microphone selected inside Typr**, 
 
 ## Confidence
 
-**High confidence:** published model modes, parameter counts where stated, supported language lists, tagged C# API shapes, release asset sizes, and Windows Bluetooth profile behavior. **Moderate confidence:** proposed integration effort and prioritization inferred from those APIs and architectures. **Unverified:** relative accuracy, memory, energy, laptop latency, sustained load and game impact. No model was changed as part of this research.
+**High confidence:** published model modes, parameter counts where stated, supported language lists, tagged C# API shapes, release asset sizes, Windows Bluetooth profile behavior, and the explicitly recorded short synthetic observations. **Moderate confidence:** proposed integration effort and prioritization inferred from those APIs and architectures. **Unverified:** accented-human accuracy, other models' actual memory/latency, energy, sustained load and game impact. No production model default or adapter was changed as part of this research.

@@ -24,4 +24,20 @@ public class AudioTests
  }
  [Fact] public async Task MissingModelFailsIntegrityCheck() => Assert.False(await ModelDownload.VerifyAsync(Path.Combine(Path.GetTempPath(),Guid.NewGuid().ToString())));
  [Fact] public void MissingModelIsNotReady() => Assert.False(ModelDownload.IsReady(Path.Combine(Path.GetTempPath(),Guid.NewGuid().ToString())));
+ [Fact] public void FlushPreservesTheFinalInterpolationFrameAndIsIdempotent() {
+  var converter=new MicrophoneConverter(WaveFormat.CreateIeeeFloatWaveFormat(16000,1));
+  var samples=converter.Convert(BitConverter.GetBytes(.75f),4).Concat(converter.Flush()).ToArray();
+  Assert.Equal(new[]{.75f},samples); Assert.Empty(converter.Flush());
+ }
+ [Theory] [InlineData(8000)] [InlineData(16000)] [InlineData(44100)] [InlineData(48000)] [InlineData(192000)]
+ public void FlushCompletesFractionalSampleCountsAcrossBlocks(int rate) {
+  var converter=new MicrophoneConverter(WaveFormat.CreateIeeeFloatWaveFormat(rate,1));
+  var result=new List<float>();
+  for(int offset=0;offset<rate;offset+=137) {
+   int frames=Math.Min(137,rate-offset);var bytes=new byte[frames*4];
+   for(int i=0;i<frames;i++)BitConverter.GetBytes(.25f).CopyTo(bytes,i*4);
+   result.AddRange(converter.Convert(bytes,bytes.Length));
+  }
+  result.AddRange(converter.Flush()); Assert.Equal(16000,result.Count);
+ }
 }

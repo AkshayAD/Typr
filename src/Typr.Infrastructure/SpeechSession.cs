@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using NAudio.Wave;
 using SherpaOnnx;
 namespace Typr.Infrastructure;
@@ -12,6 +13,14 @@ public sealed class SpeechSession : IDisposable
     readonly BlockingCollection<Action> work = new(256);
     readonly Task worker;
     readonly List<float> pending = new();
+    internal const int MaximumBufferedAudioSamples = 16000 * 120;
+    readonly object audioGate = new();
+    readonly Queue<(int Generation, float[] Samples)> capturedAudio = new();
+    int bufferedAudioSamples;
+    bool audioDrainQueued;
+    long lastLevelAt;
+    long admittedSamples;
+    internal long CapturedSampleCount => Interlocked.Read(ref admittedSamples);
     ISpeechStream? stream;
     IMicrophoneCapture? capture;
     SavedAudioRecording? recording;
@@ -82,6 +91,8 @@ public sealed class SpeechSession : IDisposable
         int generation=generationGate.Begin();
         Volatile.Write(ref pendingInputGeneration,generation);
         Volatile.Write(ref lastAudioFileName, null);
+        Volatile.Write(ref lastLevelAt, 0);
+        Interlocked.Exchange(ref admittedSamples, 0);
         int audioLimit=SavedAudioLimit;
         Enqueue(() => {
         if(!generationGate.IsCurrent(generation)) return;
@@ -96,7 +107,20 @@ public sealed class SpeechSession : IDisposable
             if(!TryBeginInput(generation)) { Abort(); return; }
             Volatile.Write(ref inputEpoch,generation);
             replayCancellation=new CancellationTokenSource(); var token=replayCancellation.Token;
-            _=Task.Run(async()=> { try { for(int offset=0;offset<replaySamples.Length;offset+=320) { token.ThrowIfCancellationRequested(); QueueAudio(generation,replaySamples.Skip(offset).Take(320).ToArray()); await Task.Delay(20,token); } } catch(OperationCanceledException) { } });
+            _=Task.Run(async()=> {
+                try {
+                    var playback=Stopwatch.StartNew();
+                    for(int offset=0;offset<replaySamples.Length;offset+=320) {
+                        token.ThrowIfCancellationRequested();
+                        int count=Math.Min(320,replaySamples.Length-offset);
+                        QueueAudio(generation,replaySamples.AsSpan(offset,count).ToArray());
+                        // Absolute pacing prevents Windows timer rounding from adding
+                        // a delay to every block and truncating a time-bounded replay.
+                        var delay=TimeSpan.FromSeconds((offset+count)/16000d)-playback.Elapsed;
+                        if(delay>TimeSpan.Zero) await Task.Delay(delay,token);
+                    }
+                } catch(OperationCanceledException) { }
+            });
         } else {
             capture=createCapture();
             if(!generationGate.IsCurrent(generation)) { Abort(); return; }
@@ -133,7 +157,11 @@ public sealed class SpeechSession : IDisposable
             try {
                 if(faulted) throw new InvalidOperationException("Audio capture failed; nothing was pasted.");
                 if(stream==null) { result.SetResult(""); return; }
-                if(pending.Count>0) { var tail=new float[8960]; pending.CopyTo(tail); pending.Clear(); stream.Accept(tail); }
+                DrainCapturedAudio(stoppingGeneration, all: true);
+                cancellationToken.ThrowIfCancellationRequested();
+                if(!generationGate.IsCurrent(stoppingGeneration)) { result.TrySetCanceled(new CancellationToken(true)); return; }
+                if(faulted) throw new InvalidOperationException("Audio capture failed; nothing was pasted.");
+                if(pending.Count>0) { var tail=pending.ToArray(); pending.Clear(); stream.Accept(tail); }
                 stream.Accept(new float[16000]); stream.InputFinished();
                 var text=Decode().Trim();
                 cancellationToken.ThrowIfCancellationRequested();
@@ -166,13 +194,59 @@ public sealed class SpeechSession : IDisposable
     }
     void QueueAudio(int generation, float[] samples)
     {
+        if(disposed || samples.Length==0 || Volatile.Read(ref inputEpoch)!=generation || !generationGate.IsCurrent(generation)) return;
+        bool overflow=false, schedule=false;
+        lock(audioGate) {
+            if(disposed || Volatile.Read(ref inputEpoch)!=generation || !generationGate.IsCurrent(generation)) return;
+            if(samples.Length > MaximumBufferedAudioSamples-bufferedAudioSamples) overflow=true;
+            else {
+                capturedAudio.Enqueue((generation,samples)); bufferedAudioSamples+=samples.Length;
+                Interlocked.Add(ref admittedSamples,samples.Length);
+                if(!audioDrainQueued) { audioDrainQueued=true; schedule=true; }
+            }
+        }
+        if(overflow) CaptureFailed(generation,new InvalidOperationException("More than two minutes of captured audio is waiting for speech processing. Cancel and retry."));
+        else {
+            if(schedule) QueueAudioDrain(generation);
+            PublishLevel(generation,samples);
+        }
+    }
+    void PublishLevel(int generation, float[] samples)
+    {
+        long now=Stopwatch.GetTimestamp(), previous=Interlocked.Read(ref lastLevelAt);
+        if(now-previous < Stopwatch.Frequency/20 || Interlocked.CompareExchange(ref lastLevelAt,now,previous)!=previous) return;
         if(disposed || Volatile.Read(ref inputEpoch)!=generation || !generationGate.IsCurrent(generation)) return;
-        try { if(!work.TryAdd(() => Feed(generation,samples))) CaptureFailed(generation,new InvalidOperationException("Audio processing fell behind. Cancel and retry.")); } catch(InvalidOperationException) { /* shutdown raced a capture callback */ }
+        Level?.Invoke(Math.Min(1,(float)Math.Sqrt(samples.Sum(x=>(double)x*x)/samples.Length)*4));
+    }
+    void QueueAudioDrain(int generation)
+    {
+        try { if(!work.TryAdd(() => DrainCapturedAudio(generation))) CaptureFailed(generation,new InvalidOperationException("Audio processing fell behind. Cancel and retry.")); }
+        catch(InvalidOperationException) { /* shutdown raced a capture callback */ }
+    }
+    void DrainCapturedAudio(int generation, bool all=false)
+    {
+        do {
+            (int Generation, float[] Samples) block;
+            lock(audioGate) {
+                if(activeEpoch!=generation || !generationGate.IsCurrent(generation)) return;
+                if(capturedAudio.Count==0) { audioDrainQueued=false; return; }
+                block=capturedAudio.Dequeue(); bufferedAudioSamples-=block.Samples.Length;
+            }
+            Feed(block.Generation,block.Samples);
+        } while(all && !faulted && generationGate.IsCurrent(generation));
+        bool schedule=false;
+        lock(audioGate) {
+            if(activeEpoch==generation) {
+                schedule=!faulted && generationGate.IsCurrent(generation) && capturedAudio.Count>0;
+                if(!schedule) audioDrainQueued=false;
+            }
+        }
+        // One wake-up per recording yields between blocks to stop/cancel controls.
+        if(schedule) QueueAudioDrain(generation);
     }
     void Feed(int generation, float[] samples)
     {
         if(stream==null || faulted || activeEpoch!=generation || !generationGate.IsCurrent(generation)) return;
-        Level?.Invoke(samples.Length==0 ? 0 : Math.Min(1,(float)Math.Sqrt(samples.Sum(x=>(double)x*x)/samples.Length)*4));
         Accept(samples);
     }
     void Accept(float[] samples)
@@ -199,7 +273,16 @@ public sealed class SpeechSession : IDisposable
     {
         var audio=recording; recording=null;
         try { CloseCapture(); }
-        finally { try { audio?.Dispose(); } finally { stream?.Dispose(); stream=null; pending.Clear(); } }
+        finally {
+            try { audio?.Dispose(); }
+            finally {
+                try { stream?.Dispose(); }
+                finally {
+                    stream=null; pending.Clear();
+                    lock(audioGate) { capturedAudio.Clear(); bufferedAudioSamples=0; audioDrainQueued=false; }
+                }
+            }
+        }
     }
     public void Dispose()
     {
@@ -228,18 +311,38 @@ internal sealed class SherpaSpeechStream(OnlineRecognizer recognizer) : ISpeechS
 internal sealed class MicrophoneConverter
 {
     readonly WaveFormat format; readonly bool floating; readonly NAudio.Dsp.WdlResampler resampler=new();
+    bool finished;
+    long inputFrames, outputSamples;
     public MicrophoneConverter(WaveFormat format) { this.format=format; floating=format.Encoding==WaveFormatEncoding.IeeeFloat || format is WaveFormatExtensible ext && ext.SubFormat==new Guid("00000003-0000-0010-8000-00aa00389b71"); if(format.BitsPerSample is not (16 or 24 or 32)) throw new NotSupportedException("Microphone sample format is unsupported."); resampler.SetMode(true,2,false); resampler.SetFilterParms(); resampler.SetFeedMode(true); resampler.SetRates(format.SampleRate,16000); }
     public float[] Convert(byte[] bytes,int count)
     {
+        if(finished) throw new InvalidOperationException("Audio conversion has already finished.");
         int stride=format.BitsPerSample/8; int frames=count/format.BlockAlign;
+        inputFrames+=frames;
         resampler.ResamplePrepare(frames,1,out var input,out int inputOffset); int sampleIndex=0;
         for(int frame=0;frame+format.BlockAlign<=count;frame+=format.BlockAlign) {
             float sum=0;
             for(int channel=0;channel<format.Channels;channel++) { int i=frame+channel*stride; sum+=floating ? BitConverter.ToSingle(bytes,i) : stride switch { 2=>BitConverter.ToInt16(bytes,i)/32768f, 3=>((bytes[i]|bytes[i+1]<<8|bytes[i+2]<<16)<<8>>8)/8388608f, _=>BitConverter.ToInt32(bytes,i)/2147483648f }; }
             input[inputOffset+sampleIndex++]=sum/format.Channels;
         }
-        var result=new float[(int)Math.Ceiling(frames*16000d/format.SampleRate)+64];
+        // Bound output by cumulative input duration. WDL's feed mode can otherwise
+        // overshoot fractional packet boundaries and accumulate extra samples.
+        var result=new float[checked((int)(inputFrames*16000/format.SampleRate-outputSamples))];
         int produced=resampler.ResampleOut(result,0,frames,result.Length,1);
+        outputSamples+=produced;
+        return result.AsSpan(0,produced).ToArray();
+    }
+    public float[] Flush()
+    {
+        if(finished) return [];
+        finished=true;
+        // Supplying fewer input frames than requested signals WDL's end of input.
+        // This releases the last fractional/interpolation frame without recording new audio.
+        var result=new float[checked((int)(inputFrames*16000/format.SampleRate-outputSamples))];
+        if(result.Length==0) return result;
+        resampler.ResamplePrepare(1,1,out _,out _);
+        int produced=resampler.ResampleOut(result,0,0,result.Length,1);
+        outputSamples+=produced;
         return result.AsSpan(0,produced).ToArray();
     }
 }
