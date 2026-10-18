@@ -86,30 +86,33 @@ public sealed class MicrophoneLifecycleTests
     }
 
     [Fact]
-    public async Task CancelledQueuedStartNeverConstructsInput()
+    public async Task CancellationDuringModelPreparationClosesIndependentInput()
     {
         var entered=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var disposed=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var release=new ManualResetEventSlim();
-        int opens=0;
+        var input=new FakeCapture();
         using var session=new SpeechSession(() => {
             entered.TrySetResult();
             if(!release.Wait(Timeout)) throw new TimeoutException();
             return new FakeStream { OnDispose=() => disposed.TrySetResult() };
-        },() => { Interlocked.Increment(ref opens); return new FakeCapture(); });
+        },() => input);
         try {
             session.StartRecording();
             await entered.Task.WaitAsync(Timeout);
+            await input.Started.Task.WaitAsync(Timeout);
             session.CancelRecording();
+            // Capture closure is independent of the blocked model factory too.
+            await input.Disposed.Task.WaitAsync(Timeout);
+            Assert.Equal(1,input.Starts); Assert.Equal(1,input.Disposes);
         } finally { release.Set(); }
         await disposed.Task.WaitAsync(Timeout);
-        Assert.Equal(0,opens);
     }
 
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task StopDuringPendingFactoryPreventsLateInputStartAndAllowsNextRecording(bool streamFactory)
+    public async Task ReleaseDuringPreparationPreservesOnlyInputThatAlreadyStarted(bool streamFactory)
     {
         using var release=new ManualResetEventSlim();
         var entered=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -126,10 +129,8 @@ public sealed class MicrophoneLifecycleTests
             if(streamFactory) WaitForRelease();
             return firstStream;
         },() => {
-            Interlocked.Increment(ref inputs);
-            if(streamFactory) return nextInput;
-            if(inputs>1) return nextInput;
-            WaitForRelease();
+            if(Interlocked.Increment(ref inputs)>1) return nextInput;
+            if(!streamFactory) WaitForRelease();
             return firstInput;
         });
         session.Error += errors.Enqueue;
@@ -137,22 +138,25 @@ public sealed class MicrophoneLifecycleTests
         await entered.Task.WaitAsync(Timeout);
         Task<string> stopping;
         try {
-            stopping=session.StopRecordingAsync(); // Revoke before the worker is released.
+            if(streamFactory) {
+                await firstInput.Started.Task.WaitAsync(Timeout);
+                firstInput.Emit([.25f]);
+            }
+            stopping=session.StopRecordingAsync();
         } finally { release.Set(); }
-        Assert.Equal("",await stopping.WaitAsync(Timeout));
-        Assert.False(firstStream.Finished);
-        Assert.Equal(0,firstInput.Starts);
-        Assert.Equal(streamFactory ? 0 : 1,inputs);
-        Assert.Equal(streamFactory ? 0 : 1,firstInput.Disposes);
-        Assert.Empty(firstStream.Samples);
-        Assert.Equal(0,firstStream.Decodes);
+        Assert.Equal(streamFactory ? "synthetic result" : "",await stopping.WaitAsync(Timeout));
+        Assert.Equal(streamFactory,firstStream.Finished);
+        Assert.Equal(streamFactory ? 1 : 0,firstInput.Starts);
+        Assert.Equal(1,inputs); Assert.Equal(1,firstInput.Disposes);
+        Assert.Equal(streamFactory ? new[] {.25f} : [],firstStream.Samples.Where(x=>x!=0));
+        if(!streamFactory) Assert.Equal(0,firstStream.Decodes);
 
         session.StartRecording();
         await nextInput.Started.Task.WaitAsync(Timeout);
         firstInput.Emit([.9f]);
         nextInput.Emit([.2f]);
         Assert.Equal("synthetic result",await session.StopRecordingAsync().WaitAsync(Timeout));
-        Assert.Equal(new[] {.2f},nextStream.Samples.Where(x => x!=0).ToArray());
+        Assert.Equal(new[] {.2f},nextStream.Samples.Where(x=>x!=0).ToArray());
         Assert.Equal(1,nextInput.Starts); Assert.Equal(1,nextInput.Disposes);
         Assert.Empty(errors);
     }
@@ -259,14 +263,23 @@ public sealed class MicrophoneLifecycleTests
     [Fact]
     public async Task StopCancellationClosesInputWithoutFinishingStream()
     {
+        using var release=new ManualResetEventSlim();
+        var closing=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var input=new FakeCapture(); var stream=new FakeStream();
+        input.OnStop=() => {
+            closing.TrySetResult();
+            if(!release.Wait(Timeout)) throw new TimeoutException();
+        };
         using var session=new SpeechSession(() => stream,() => input);
         session.StartRecording();
         await input.Started.Task.WaitAsync(Timeout);
         using var cancellation=new CancellationTokenSource();
         var stop=session.StopRecordingAsync(cancellation.Token);
-        cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => stop);
+        try {
+            await closing.Task.WaitAsync(Timeout);
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => stop);
+        } finally { release.Set(); }
         await input.Disposed.Task.WaitAsync(Timeout);
         Assert.False(stream.Finished);
     }

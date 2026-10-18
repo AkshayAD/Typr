@@ -73,27 +73,33 @@ public partial class MainWindow
         };
     }
 
+    private bool DictationBarActive => _recordingStart != null || _recording || _inputActive || HasPendingDictationOutput;
+    private bool ShouldShowDictationBar => DictationBarActive || _settings.BarVisible && !SpeechPausedForGaming;
+
     private void ConfigureCaptionOverlay() => _overlay.Configure(_settings with
     {
         BarVisible = false,
-        LiveCaptionsEnabled = _settings.LiveCaptionsEnabled && !(_desktopIntegration && _settings.BarVisible)
+        LiveCaptionsEnabled = _settings.LiveCaptionsEnabled && !(_desktopIntegration && ShouldShowDictationBar)
     });
     private void ConfigureCompanion()
     {
         if (!_companionInitialized) return;
-        ConfigureCaptionOverlay();
-        if (_desktopIntegration) _dictationBar.Configure(_settings.BarVisible && !(SpeechPausedForGaming && !_recording && !_busy), _settings.LiveCaptionsEnabled,
+        if (_desktopIntegration) _dictationBar.Configure(ShouldShowDictationBar, _settings.LiveCaptionsEnabled,
             _settings.BarHoverActions, _settings.BarContextActions, _settings.BarLeft, _settings.BarTop,
             _settings.BarOpacity, _settings.BarScale, _settings.BarHoverDelay, _settings.AllowButtonRecording, _settings.BarDockEdge);
         RefreshCompanionState();
     }
     private void RefreshCompanionState()
     {
-        if (!_companionInitialized || !_desktopIntegration) return;
-        _dictationBar.UpdateState(_speech != null && !_speechFaulted && !_loading, _recording, _busy || _loading || _recordingStart != null,
-            _settings.LiveCaptionsEnabled && (_recording || _busy) ? _liveCaption : null,
-            _loading || _recordingStart != null ? "Preparing speech…" : _busy ? _processingPhase : _recording ? (_readyInputGeneration == _speechGeneration ? "Listening · Esc cancels" : "Opening microphone…") : _inputActive ? "Closing microphone…" : _speechFaulted && _speech != null ? "Speech needs attention" : _speech != null ? "Ready · microphone off" : "Microphone off",
-            inputActive: _readyInputGeneration == _speechGeneration);
+        if (!_companionInitialized) return;
+        ConfigureCaptionOverlay();
+        if (!_desktopIntegration) return;
+        bool finishing = HasPendingDictationOutput && !_recording;
+        _dictationBar.UpdateState(_speech != null && !_speechFaulted && !_loading && !SpeechPausedForGaming && !_resourceTransitioning, _recording, _busy || finishing || _loading || _recordingStart != null,
+            _settings.LiveCaptionsEnabled && (_recording || _busy || finishing) ? _liveCaption : null,
+            _loading || _recordingStart != null ? "Preparing speech…" : _recording ? (_readyInputGeneration == _speechGeneration ? "Listening · Esc cancels" : "Opening microphone…") : _busy || finishing ? _processingPhase : _inputActive ? "Closing microphone…" : _speechFaulted && _speech != null ? "Speech needs attention" : _speech != null ? "Ready · microphone off" : "Microphone off",
+            inputActive: _readyInputGeneration == _speechGeneration,
+            canStartWhileBusy: HasPendingDictationOutput && !_busy && !_loading && !SpeechPausedForGaming && !_resourceTransitioning && _recordingStart == null);
     }
     private void UpdateLiveBarCaption(string text) { _liveCaption = text; RefreshCompanionState(); }
     private async Task CloseCompanionAsync()

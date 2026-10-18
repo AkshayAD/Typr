@@ -6,7 +6,7 @@ This is a development preview built with C#/.NET 8, WPF, NAudio and sherpa-onnx.
 
 ## Install
 
-Run `Typr-0.1.1-win-x64-Setup.exe` as your normal Windows user. It adds Typr to Start, the desktop and Windows' installed-apps list, without requiring an administrator account or enabling automatic startup. The default location is `%LOCALAPPDATA%\Programs\Typr`. The window title and sidebar show the installed version. Close Typr before upgrading. Uninstall removes the program and its shortcuts while preserving settings, models, provider connections and history. See [building and verifying the installer](docs/INSTALLATION.md).
+Run `Typr-0.1.2-win-x64-Setup.exe` as your normal Windows user. It adds Typr to Start, the desktop and Windows' installed-apps list, without requiring an administrator account or enabling automatic startup. The default location is `%LOCALAPPDATA%\Programs\Typr`. The window title and sidebar show the installed version. Close Typr before upgrading. Uninstall removes the program and its shortcuts while preserving settings, models, provider connections and history. See [building and verifying the installer](docs/INSTALLATION.md).
 
 ## System requirements
 
@@ -26,7 +26,7 @@ Platform details follow [.NET Windows support](https://learn.microsoft.com/en-us
 
 ## The experience
 
-- **Dictate and paste:** keyboard hold or hands-free, with target verification, rich clipboard preservation and Copy recovery. Bar/button recording is an explicit opt-in; shortcuts are the default.
+- **Dictate and paste:** start your next utterance while earlier text finishes recognizing or polishing. Paste stays in speaking order and waits while you are recording again, with target verification, rich clipboard preservation and Copy recovery. Bar/button recording is an explicit opt-in; shortcuts are the default. A hidden Silk bar appears temporarily during dictation and returns to hidden afterward.
 - **Companion bar:** drag anywhere, including controls, then release to glide to the nearest work-area edge at that position. It lies horizontally on the top/bottom and vertically on the left/right; hover doubles its dimensions inward. The default capsule is 96 by 16 DIPs horizontally or 16 by 96 vertically, with an 18 DIP inset and bottom-center reset. Customize hover/right-click actions, live text, background opacity, size and hover delay.
 - **Microphone on demand:** preparing the model leaves audio hardware closed. Finish/release closes capture after a 300 ms ending tail; cancel closes it without that delay. No idle pre-roll, loopback capture, system mute/default-device changes or exclusive input.
 - **Your AI subscription:** default **GPT-6 Luna, low reasoning**; ChatGPT/Claude priority, connection/model refresh, sign-in, CLI updates and effort comparisons in Settings.

@@ -4,6 +4,10 @@ Date: 18 October 2026. Specifications: [Product/UI plan](PRODUCT_DESIGN_PLAN.md)
 
 ## Delivered
 
+**0.1.2 continuous dictation:** microphone producers have independent recording contexts and bounded PCM queues; one model worker retains serial CPU/CUDA inference. Releasing an utterance detaches an immutable result job instead of holding the input path through polish/paste. Each job snapshots settings, mode, target, duration and audio filename. Ordered delivery waits for a new capture to finish and defers only before any native insertion attempt; clipboard cleanup completes before the next transaction. Generation-scoped callbacks, cancellation and faults preserve other utterances. Hidden Silk appears temporarily through actual input/pending output, returns to the saved visibility afterward, and shows current Listening ahead of old finishing work. Gaming still rejects new recordings and unloads after current work completes.
+
+Current automated evidence: **194 hidden Windows checks passed**, **151 Infrastructure checks passed**, and the **six opt-in real CPU/GPU checks passed separately with zero skips**. New tests hold an older decode open while newer PCM begins and closes, preserve all final packets, verify ordered host insertion and hidden-bar restoration, reject unowned chord stops, isolate later capture failure, and prevent unsafe paste retries. Five host pipeline checks passed again after the final queue-phase change. These checks do not establish natural-voice recognition quality or current browser delivery; that remaining physical test is prepared after installation. The user's latest report confirms capture on 0.1.1 and identifies the now-repaired waiting/visibility UX.
+
 | Area | Behavior |
 | --- | --- |
 | Identity and requirements | Typr UI, projects, namespaces, executable and data folders; requirements in Settings/README; staged profile migration preserves originals and existing destinations |
@@ -18,7 +22,7 @@ Date: 18 October 2026. Specifications: [Product/UI plan](PRODUCT_DESIGN_PLAN.md)
 | Audio | Optional local multilingual Small/Large v3 re-transcription, pinned downloads/hashes, bounded chunks and cancellation around native decoding |
 | Resource use | Efficient CPU inference without ORT thread spinning; Automatic follows Windows Game Mode V2 notifications, Everyday overrides detection, Gaming pauses new speech and unloads at idle, hides bar, stops target polling and releases shortcuts; current dictation can finish; previous prepared state resumes without microphone capture |
 | Storage | Independent opt-in history/audio retention, immutable history snapshots, atomic byte-bounded saves, corrupt/future-file preservation |
-| Installation | Version 0.1.1, visible in title/sidebar; per-user self-contained Windows x64 setup with Start/desktop shortcuts, Installed apps registration, stable upgrade identity and uninstall that preserves profile data; .NET/Windows Desktop 8.0.32; active-instance guards prevent setup/uninstall closing dictation |
+| Installation | Version 0.1.2, visible in title/sidebar; per-user self-contained Windows x64 setup with Start/desktop shortcuts, Installed apps registration, stable upgrade identity and uninstall that preserves profile data; .NET/Windows Desktop 8.0.32; active-instance guards prevent setup/uninstall closing dictation |
 | NVIDIA acceleration | Optional pinned NeMo-Speech.cpp/Q8_0 package; Automatic selects verified CUDA with CPU fallback, Quality 560 ms default and optional 160 ms profile; separate model location/download, silent preparation, existing gaming unload/resume and microphone fences |
 
 Speech recognition stays local. Enabling AI polish sends recognized text to the selected provider through its official CLI. No raw audio is sent for polishing. There is no mandatory account for local mode, telemetry backend or API-key billing fallback.

@@ -6,7 +6,7 @@ using System.Windows.Automation;
 namespace Typr.Windows;
 
 internal sealed record DeliveryTarget(nint Window, int[]? RuntimeId, string? Value, bool Readable, bool Password, bool Editable = false);
-internal sealed record DeliveryResult(string Message, bool Confirmed);
+internal sealed record DeliveryResult(string Message, bool Confirmed, bool Deferred = false);
 
 /// <summary>Fails closed on focus uncertainty. No automatic second delivery after an unconfirmed paste.</summary>
 internal sealed class ClipboardDelivery(string? logDirectory = null)
@@ -112,9 +112,9 @@ internal sealed class ClipboardDelivery(string? logDirectory = null)
     private static bool SameElement(DeliveryTarget expected, DeliveryTarget actual) => expected.Window == actual.Window &&
         expected.RuntimeId != null && actual.RuntimeId != null && expected.RuntimeId.SequenceEqual(actual.RuntimeId);
 
-    private sealed record PasteAttempt(uint Sent, nint Foreground, string? Error);
+    private sealed record PasteAttempt(uint Sent, nint Foreground, string? Error, bool Deferred = false);
 
-    private static async Task<PasteAttempt> SendPasteWithDeadlineAsync(DeliveryTarget target, uint clipboardSequence, Action<long> markAttempt, CancellationToken cancellationToken)
+    private static async Task<PasteAttempt> SendPasteWithDeadlineAsync(DeliveryTarget target, uint clipboardSequence, Action<long> markAttempt, CancellationToken cancellationToken, Func<bool>? captureActive)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(500);
@@ -124,14 +124,18 @@ internal sealed class ClipboardDelivery(string? logDirectory = null)
         {
             var inputs = new[] { NativeMethods.Key(0x11), NativeMethods.Key(0x56), NativeMethods.Key(0x56, true), NativeMethods.Key(0x11, true) };
             // UIA is isolated on an MTA worker. A stalled provider must never cause a late paste.
-            if (!StillFocusedEditableTarget(target)) return new PasteAttempt(0, 0, "Focus couldn't be confirmed.");
+            if (captureActive?.Invoke() == true) return new PasteAttempt(0, 0, null, Deferred: true);
+            bool focused = StillFocusedEditableTarget(target);
             token.ThrowIfCancellationRequested();
             var foreground = NativeMethods.GetForegroundWindow();
+            if (captureActive?.Invoke() == true) return new PasteAttempt(0, foreground, null, Deferred: true);
+            if (!focused) return new PasteAttempt(0, foreground, "Focus couldn't be confirmed.");
             if (Stopwatch.GetTimestamp() >= expires) return new PasteAttempt(0, foreground, "The insertion deadline expired.");
             if (NativeMethods.ModifiersHeld()) return new PasteAttempt(0, foreground, "Keyboard modifiers changed before insertion.");
             if (foreground != target.Window) return new PasteAttempt(0, foreground, "Focus changed before insertion.");
             if (NativeMethods.GetClipboardSequenceNumber() != clipboardSequence)
                 return new PasteAttempt(0, foreground, "The clipboard changed before insertion.");
+            if (captureActive?.Invoke() == true) return new PasteAttempt(0, foreground, null, Deferred: true);
             markAttempt(Stopwatch.GetTimestamp());
             token.ThrowIfCancellationRequested();
             // No await or UIA call between these final guards and the sole text delivery.
@@ -147,11 +151,12 @@ internal sealed class ClipboardDelivery(string? logDirectory = null)
         }
     }
 
-    public async Task<DeliveryResult> DeliverAsync(string text, DeliveryTarget target, CancellationToken cancellationToken, bool restoreFocus = false)
+    public async Task<DeliveryResult> DeliverAsync(string text, DeliveryTarget target, CancellationToken cancellationToken, bool restoreFocus = false, Func<bool>? captureActive = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         text = text.TrimEnd('\r', '\n');
         if (text.Length == 0) return new("No speech was detected.", false);
+        if (captureActive?.Invoke() == true) return await CompleteDeferredPasteAsync();
         var foregroundBefore = NativeMethods.GetForegroundWindow();
         uint sent = 0; int expectedInputs = 0; string outcome = "not-delivered"; nint foregroundAtPaste = 0;
         bool modifiers = NativeMethods.ModifiersHeld();
@@ -161,14 +166,27 @@ internal sealed class ClipboardDelivery(string? logDirectory = null)
         bool clipboardCleanupFinished = false;
         long attemptedAt = 0;
         var stopwatch = Stopwatch.StartNew();
+        async Task<DeliveryResult> DeferAsync()
+        {
+            if (!CanDeferPaste(Interlocked.Read(ref attemptedAt), sent))
+                return new("Insertion may already have been attempted. Your result is in Typr; check the field before trying again.", false);
+            var result = await CompleteDeferredPasteAsync(clipboardReplaced
+                ? () => SafeClipboard.RestoreIfOwnedAsync(previous, clipboardSequence) : null);
+            clipboardCleanupFinished = clipboardReplaced;
+            outcome = result.Deferred ? "capture-active-deferred" : "deferred-clipboard-restore-failed";
+            return result;
+        }
         try
         {
             if (target.Password || !target.Editable || target.RuntimeId == null) {
                 outcome = "unconfirmed-target";
                 return new("Automatic paste requires a confirmed, writable, non-password field. Your result is in Typr; use Copy text when ready.", false);
             }
-            while (NativeMethods.ModifiersHeld() && stopwatch.ElapsedMilliseconds < 2500)
+            while (NativeMethods.ModifiersHeld() && stopwatch.ElapsedMilliseconds < 2500) {
+                if (captureActive?.Invoke() == true) return await DeferAsync();
                 await Task.Delay(20, cancellationToken);
+            }
+            if (captureActive?.Invoke() == true) return await DeferAsync();
             modifiers = NativeMethods.ModifiersHeld();
             if (modifiers) { outcome = "modifiers-held"; return new("Shortcut keys are still held. Your result is in Typr; use Copy text when ready.", false); }
             cancellationToken.ThrowIfCancellationRequested();
@@ -180,7 +198,9 @@ internal sealed class ClipboardDelivery(string? logDirectory = null)
                 return new("Couldn't focus the destination. Your result is in Typr; use Copy text when ready.", false);
             }
             await Task.Delay(50, cancellationToken);
+            if (captureActive?.Invoke() == true) return await DeferAsync();
             var before = await CaptureTargetAsync(target.Window, cancellationToken);
+            if (captureActive?.Invoke() == true) return await DeferAsync();
             if (before.Password || !before.Editable || !SameElement(target, before)) {
                 outcome = "target-changed";
                 return new("The destination changed or isn't confirmed writable. Your result is in Typr; use Copy text when ready.", false);
@@ -199,12 +219,14 @@ internal sealed class ClipboardDelivery(string? logDirectory = null)
             previous = replacement.Previous; clipboardSequence = replacement.Sequence;
             clipboardReplaced = true;
             outcome = "copied";
+            if (captureActive?.Invoke() == true) return await DeferAsync();
             if (Marshal.SizeOf<NativeMethods.Input>() != 40)
                 throw new InvalidOperationException("The keyboard input layout is not valid for Windows x64.");
             expectedInputs = 4;
             var attempt = await SendPasteWithDeadlineAsync(before, clipboardSequence,
-                timestamp => Interlocked.Exchange(ref attemptedAt, timestamp), cancellationToken);
+                timestamp => Interlocked.Exchange(ref attemptedAt, timestamp), cancellationToken, captureActive);
             sent = attempt.Sent; foregroundAtPaste = attempt.Foreground;
+            if (attempt.Deferred) return await DeferAsync();
             if (attempt.Error != null) {
                 outcome = "paste-guard-rejected";
                 return new(attempt.Error + " Text remains available in Typr. Check the field before trying again.", false);
@@ -280,6 +302,16 @@ internal sealed class ClipboardDelivery(string? logDirectory = null)
             }
             catch { }
         }
+    }
+
+    internal static bool CanDeferPaste(long attemptedAt, uint sent) => attemptedAt == 0 && sent == 0;
+
+    internal static async Task<DeliveryResult> CompleteDeferredPasteAsync(Func<Task<ClipboardRestoreResult>>? restore = null)
+    {
+        // A retry must not replace an earlier snapshot before its cleanup finishes.
+        if (restore != null && await restore() == ClipboardRestoreResult.BusyOrFailed)
+            return new("Insertion paused, but the previous clipboard couldn't be restored. Your result is in Typr; use Copy text when ready.", false);
+        return new("Waiting for your current recording before insertion.", false, Deferred: true);
     }
 
     internal static async Task<(DeliveryResult Result, string Outcome)> RecoverCancelledClipboardAsync(

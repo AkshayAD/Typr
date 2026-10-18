@@ -159,7 +159,7 @@ public partial class MainWindow
     }
     private async void UpdateProvider_Click(object sender, RoutedEventArgs e)
     {
-        if (_providerBusy || _recording || _busy) { ProviderStatus.Text = "Finish dictation before updating a provider."; return; }
+        if (_providerBusy || _recording || _busy || HasPendingDictationOutput) { ProviderStatus.Text = "Finish dictation before updating a provider."; return; }
         _providerBusy = true; SetProviderButtons(false);
         ProviderStatus.Text = "Installing the official CLI into Typr's own provider folder…";
         try { await Ai.InstallCliUpdateAsync(PrimaryProvider, _lifetime.Token); if (!_closing) ProviderStatus.Text = "Provider updated. Refreshing its connection and model list…"; }
@@ -171,7 +171,7 @@ public partial class MainWindow
     private async void CompareReasoning_Click(object sender, RoutedEventArgs e)
     {
         if (SpeechPausedForGaming) { BenchmarkResultBox.Text = "Comparisons are paused for gaming. Choose Everyday to resume."; return; }
-        if (_providerBusy || _busy || _recording) return;
+        if (_providerBusy || _busy || HasPendingDictationOutput || _recording) return;
         string sample = BenchmarkInputBox.Text;
         using var comparison = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         _providerComparison = comparison;

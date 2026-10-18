@@ -9,7 +9,7 @@ public partial class MainWindow
     private bool _windowsGaming, _resourcePreferencesInitializing, _resourceTransitioning, _resumeSpeechAfterGaming, _gameInputsPaused;
     private Task? _resourceTransitionTask;
     private bool SpeechPausedForGaming => _settings.SpeechResourceMode == "Gaming" || _settings.SpeechResourceMode == "Automatic" && _windowsGaming;
-    private Typr.Core.AppSettings EffectiveShortcutSettings => _settings with { CommandShortcutsEnabled = _settings.CommandShortcutsEnabled && !(SpeechPausedForGaming && !_recording && !_busy) };
+    private Typr.Core.AppSettings EffectiveShortcutSettings => _settings with { CommandShortcutsEnabled = _settings.CommandShortcutsEnabled && !(SpeechPausedForGaming && !_recording && !_busy && !HasPendingDictationOutput) };
 
     private void InitializeSpeechResources(bool desktopIntegration)
     {
@@ -40,15 +40,15 @@ public partial class MainWindow
     {
         bool paused = SpeechPausedForGaming;
         SpeechResourceStatus.Text = paused
-            ? _recording || _busy ? "Gaming · finishing current dictation before pausing" : _loading || _resourceTransitioning ? "Gaming · releasing speech resources" : "Gaming · speech paused, microphone off"
+            ? _recording || _busy || HasPendingDictationOutput ? "Gaming · finishing current dictation before pausing" : _loading || _resourceTransitioning ? "Gaming · releasing speech resources" : "Gaming · speech paused, microphone off"
             : "Everyday · " + (_speech?.BackendDescription ?? "speech unloaded") + (_settings.SpeechResourceMode == "Automatic" && _gameModeMonitor is { IsSupported: false } ? " · automatic game detection unavailable; use Gaming manually" : "");
         if (_closing) return;
         if (_desktopIntegration)
         {
-            bool showBar = _settings.BarVisible && !(paused && !_recording && !_busy);
+            bool showBar = ShouldShowDictationBar;
             if (!showBar && _dictationBar.IsVisible) _dictationBar.HideBar();
             else if (showBar && !_dictationBar.IsVisible) _dictationBar.ShowBar();
-            bool pauseInputs = paused && !_recording && !_busy;
+            bool pauseInputs = paused && !_recording && !_busy && !HasPendingDictationOutput;
             if (pauseInputs) { _targetTimer.Stop(); _externalTargets.Clear(); }
             else if (IsLoaded && !_targetTimer.IsEnabled && !_closing) _targetTimer.Start();
             if (IsLoaded && _gameInputsPaused != pauseInputs && !_closing)
@@ -63,13 +63,13 @@ public partial class MainWindow
         {
             CancelPendingRecordingStart();
             _download?.Cancel(); _historyOperation?.Cancel(); _providerComparison?.Cancel();
-            if (_loading || _recording || _busy || _historyOperation != null || _speech == null) return;
+            if (_loading || _recording || _busy || HasPendingDictationOutput || _historyOperation != null || _speech == null) return;
             _resumeSpeechAfterGaming = true;
             var speech = _speech; _speech = null;
             _resourceTransitioning = true;
             _resourceTransitionTask = ReleaseSpeechForGamingAsync(speech);
         }
-        else if (_resumeSpeechAfterGaming && !_loading && !_recording && !_busy)
+        else if (_resumeSpeechAfterGaming && !_loading && !_recording && !_busy && !HasPendingDictationOutput)
         {
             _resumeSpeechAfterGaming = false;
             _resourceTransitionTask = LoadSpeechAsync(focusPractice: false);
@@ -82,7 +82,7 @@ public partial class MainWindow
         try { await Task.Run(speech.Dispose); }
         catch (Exception) { if (!_closing) StatusText.Text = "Speech stopped with a cleanup error. Restart Typr before dictating again."; _speechFaulted = true; }
         finally {
-            _inputActive = false; _readyInputGeneration = -1; MicLevel.Value = 0;
+            _activeInputGenerations.Clear(); _inputActive = false; _readyInputGeneration = -1; MicLevel.Value = 0;
             _resourceTransitioning = false;
             if (!_closing) { ModelStatus.Text = "Speech paused for gaming. Microphone off."; PauseButton.IsEnabled = false; RefreshReadiness(); }
         }

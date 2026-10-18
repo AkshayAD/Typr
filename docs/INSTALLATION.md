@@ -2,9 +2,9 @@
 
 Typr's installer supports Windows 10 and 11 on an x64 PC. The application includes its .NET runtime. Speech models and optional provider CLIs are downloaded separately from inside Typr.
 
-Run `Typr-0.1.1-win-x64-Setup.exe` as your normal Windows user. Setup installs into `%LOCALAPPDATA%\Programs\Typr`, adds Typr to Start and Windows Settings > Apps > Installed apps, and creates a desktop shortcut by default. Clear **Create a desktop shortcut** if you do not want it. No administrator permission is requested, and Typr is not added to Windows startup. The final **Launch Typr** option is off by default.
+Run `Typr-0.1.2-win-x64-Setup.exe` as your normal Windows user. Setup installs into `%LOCALAPPDATA%\Programs\Typr`, adds Typr to Start and Windows Settings > Apps > Installed apps, and creates a desktop shortcut by default. Clear **Create a desktop shortcut** if you do not want it. No administrator permission is requested, and Typr is not added to Windows startup. The final **Launch Typr** option is off by default.
 
-This package is **version 0.1.1**, with executable file version `0.1.1.0`. Check Typr's visible version number to confirm which installed build you opened. Installing it over the earlier 0.1.0 pilot keeps the same upgrade identity and profile locations.
+This package is **version 0.1.2**, with executable file version `0.1.2.0`. Check Typr's visible version number to confirm which installed build you opened. Installing it over the earlier 0.1.0 pilot keeps the same upgrade identity and profile locations.
 
 For every user-facing update, increment `Version`, `AssemblyVersion` and `FileVersion` in `src/Typr.Windows/Typr.Windows.csproj` together. The window title/sidebar read the assembly version; the installer reads the project version. Keep the Inno fallback values synchronized and record the changes in [the changelog](CHANGELOG.md).
 

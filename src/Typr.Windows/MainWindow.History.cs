@@ -98,7 +98,7 @@ public partial class MainWindow
     private async Task RunHistoryOperationAsync(Func<CancellationToken, Task> action)
     {
         if (SpeechPausedForGaming) { HistoryOperationStatus.Text = "Speech processing is paused for gaming. Choose Everyday to resume."; return; }
-        if (_historyOperation != null || _closing || _busy || _recording) return;
+        if (_historyOperation != null || _closing || _busy || _recording || _recordingStart != null || HasPendingDictationOutput) return;
         using var operation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         _historyOperation = operation;
         SetHistoryBusy(true);
@@ -150,7 +150,7 @@ public partial class MainWindow
     private void StopHistoryAudio_Click(object sender, RoutedEventArgs e) => _historyPlayer?.Stop();
     private async void PasteHistory_Click(object sender, RoutedEventArgs e)
     {
-        if (HistoryList.SelectedItem is not TranscriptEntry entry || _busy || _recording) return;
+        if (HistoryList.SelectedItem is not TranscriptEntry entry || _busy || _recording || _recordingStart != null || HasPendingDictationOutput) return;
         await RunHistoryOperationAsync(async token =>
         {
             var target = await _externalTargets.RefreshAsync(token);

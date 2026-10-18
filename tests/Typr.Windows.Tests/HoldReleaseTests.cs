@@ -50,7 +50,7 @@ public sealed class HoldReleaseTests(WpfFixture fixture)
 
     [Fact] public void UnrelatedKeyStillCancelsAnAcceptedPendingHold() => fixture.Run(() => WithWindow(window => {
         using var pending = new CancellationTokenSource(); var token = pending.Token;
-        Set(window, "_recordingStart", pending);
+        Set(window, "_recordingStart", pending); Set(window, "_keyboardCapture", true);
         var machine = new HotkeyStateMachine();
         machine.Process(HotkeyKey.Control, true); machine.Process(HotkeyKey.Alt, true);
         Invoke(window, "HandleHotkey", machine.Process(HotkeyKey.Other, true), (nint)0);
@@ -59,7 +59,7 @@ public sealed class HoldReleaseTests(WpfFixture fixture)
     }));
 
     [Fact] public void ModeChangeStillAppliesToAnAcceptedPendingHold() => fixture.Run(() => WithWindow(window => {
-        using var pending = new CancellationTokenSource(); Set(window, "_recordingStart", pending);
+        using var pending = new CancellationTokenSource(); Set(window, "_recordingStart", pending); Set(window, "_keyboardCapture", true);
         var machine = new HotkeyStateMachine();
         machine.Process(HotkeyKey.Control, true); machine.Process(HotkeyKey.Alt, true);
         Invoke(window, "HandleHotkey", machine.Process(HotkeyKey.Shift, true), (nint)0);
@@ -88,20 +88,19 @@ public sealed class HoldReleaseTests(WpfFixture fixture)
             Assert.Same(originalFocus.Task, Get<Task<DeliveryTarget>>(window, "_target"));
             int generation = Get<int>(window, "_speechGeneration");
             var operation = Get<CancellationTokenSource>(window, "_operation");
+            Set(window, "_keyboardCapture", true);
             var machine = new HotkeyStateMachine();
             machine.Process(HotkeyKey.Control, true); machine.Process(HotkeyKey.Alt, true);
             Send(HotkeyKey.Alt, false);
             await stream.Finalizing.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.True(input.Stopped.Task.IsCompleted);
-            Assert.True(Get<bool>(window, "_busy"));
+            Assert.True((bool)typeof(MainWindow).GetProperty("HasPendingDictationOutput", Hidden)!.GetValue(window)!);
             Send(HotkeyKey.Control, false);
-            Send(HotkeyKey.Control, true); Send(HotkeyKey.Alt, true); Send(HotkeyKey.Other, true);
-            Send(HotkeyKey.Other, false); Send(HotkeyKey.Alt, false); Send(HotkeyKey.Control, false);
             Assert.False(operation.IsCancellationRequested);
             Assert.Equal(generation, Get<int>(window, "_speechGeneration"));
             stream.Release.TrySetResult();
             var deadline = Stopwatch.StartNew();
-            while (Get<bool>(window, "_busy") && deadline.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(10);
+            while ((bool)typeof(MainWindow).GetProperty("HasPendingDictationOutput", Hidden)!.GetValue(window)! && deadline.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(10);
             Assert.False(Get<bool>(window, "_busy"));
             Assert.Equal("All captured words after release.", Get<string>(window, "_latest"));
             Assert.False(originalFocus.Task.IsCompleted); // Never recaptured a different field.
@@ -116,6 +115,7 @@ public sealed class HoldReleaseTests(WpfFixture fixture)
         using var session = new SpeechSession(() => stream, () => input);
         Set(window, "_loading", true); Set(window, "_speechLoadingTask", loading.Task);
         var start = (Task)typeof(MainWindow).GetMethod("StartCaptureAsync", Hidden)!.Invoke(window, [DictationMode.Polish, (nint)0, true, false])!;
+        Set(window, "_keyboardCapture", true);
         Assert.NotNull(Get<object?>(window, "_recordingStart"));
         var machine = new HotkeyStateMachine();
         machine.Process(HotkeyKey.Control, true); machine.Process(HotkeyKey.Alt, true);

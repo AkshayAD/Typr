@@ -4,46 +4,37 @@ using NAudio.Wave;
 using SherpaOnnx;
 namespace Typr.Infrastructure;
 
-/// <summary>Single inference worker; microphone callbacks never run inference.</summary>
+public sealed record SpeechRecordingResult(string Text, string? AudioFileName, int Generation);
+
+/// <summary>One model worker; deliberate microphone captures never wait for inference.</summary>
 public sealed class SpeechSession : IDisposable
 {
     readonly OnlineRecognizer? recognizer;
     readonly NeMoSpeechEngine? gpuEngine;
     readonly Func<ISpeechStream> createStream;
     readonly Func<IMicrophoneCapture> createCapture;
-    readonly BlockingCollection<Action> work = new(256);
+    readonly BlockingCollection<RecordingContext> work = new(256);
     readonly Task worker;
-    internal const int MaximumBufferedAudioSamples = 16000 * 120;
+    readonly object sessionGate = new();
     readonly object audioGate = new();
-    readonly Queue<(int Generation, float[] Samples)> capturedAudio = new();
-    int bufferedAudioSamples;
-    bool audioDrainQueued;
-    long lastLevelAt;
-    long admittedSamples;
-    internal long CapturedSampleCount => Interlocked.Read(ref admittedSamples);
-    ISpeechStream? stream;
-    string? lastCaption;
-    IMicrophoneCapture? capture;
-    bool captureActive;
-    SavedAudioRecording? recording;
+    readonly Dictionary<int, RecordingContext> recordings = [];
+    internal const int MaximumBufferedAudioSamples = 16000 * 120;
+    int bufferedAudioSamples, nextGeneration;
+    RecordingContext? current;
     volatile bool disposed;
-    float[]? replaySamples; CancellationTokenSource? replayCancellation;
-    volatile bool faulted;
-    readonly RecordingGeneration generationGate=new();
-    int activeEpoch;
-    int inputEpoch;
-    int readyInputEpoch;
-    int pendingInputGeneration;
+    float[]? replaySamples;
     int savedAudioLimit;
-    string? lastAudioFileName;
-    public string? LastAudioFileName => Volatile.Read(ref lastAudioFileName);
+    internal long CapturedSampleCount { get { var context=Volatile.Read(ref current); return context==null ? 0 : Interlocked.Read(ref context.AdmittedSamples); } }
+    public string? LastAudioFileName => Volatile.Read(ref current)?.AudioFileName;
     public string BackendDescription { get; } = "CPU";
     public string? GpuFallbackReason { get; }
     public int SavedAudioLimit { get => Volatile.Read(ref savedAudioLimit); set => Volatile.Write(ref savedAudioLimit, Math.Clamp(value, 0, 200)); }
     public event Action<string>? Caption;
     public event Action<int, string>? CaptionForRecording;
     public event Action<float>? Level;
+    public event Action<int, float>? LevelForRecording;
     public event Action<string>? Error;
+    public event Action<int, string>? ErrorForRecording;
     /// <summary>Actual microphone lifetime, tagged to its recording. Replay never raises this event.</summary>
     public event Action<int,bool>? CaptureStateChanged;
     /// <summary>First admitted PCM block, tagged to its recording and raised before inference.</summary>
@@ -105,10 +96,7 @@ public sealed class SpeechSession : IDisposable
         worker = StartWorker();
     }
     Task StartWorker() => Task.Factory.StartNew(() => {
-        foreach(var action in work.GetConsumingEnumerable()) {
-            try { if(stream != null && (faulted || !generationGate.IsCurrent(activeEpoch))) Abort(); action(); }
-            catch(Exception e) { faulted=true; Abort(); if(!disposed && generationGate.IsCurrent(activeEpoch)) Error?.Invoke(e.Message); }
-        }
+        foreach(var context in work.GetConsumingEnumerable()) ProcessRecording(context);
     }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
     /// <summary>Prepares optional synthetic replay. Never opens or enumerates microphone hardware.</summary>
@@ -127,210 +115,320 @@ public sealed class SpeechSession : IDisposable
     public static IReadOnlyList<MicrophoneInput> EnumerateMicrophones() => SharedMicrophoneCapture.EnumerateInputs();
     public int StartRecording()
     {
-        int generation=generationGate.Begin();
-        Volatile.Write(ref pendingInputGeneration,generation);
-        Volatile.Write(ref lastAudioFileName, null);
-        Volatile.Write(ref lastLevelAt, 0);
-        Interlocked.Exchange(ref admittedSamples, 0);
-        int audioLimit=SavedAudioLimit;
-        Enqueue(() => {
-        if(!generationGate.IsCurrent(generation)) return;
-        Abort(); activeEpoch=generation; faulted=false; stream=createStream();
-        if(!generationGate.IsCurrent(generation)) { Abort(); return; }
-        if(Volatile.Read(ref pendingInputGeneration)!=generation) { Abort(); return; }
-        var dir=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Typr","audio");
-        recording=SavedAudioRecording.Start(dir,audioLimit);
-        if(!generationGate.IsCurrent(generation)) { Abort(); return; }
-        if(Volatile.Read(ref pendingInputGeneration)!=generation) { Abort(); return; }
-        if(replaySamples != null) {
-            if(!TryBeginInput(generation)) { Abort(); return; }
-            Volatile.Write(ref inputEpoch,generation);
-            replayCancellation=new CancellationTokenSource(); var token=replayCancellation.Token;
-            _=Task.Run(async()=> {
-                try {
-                    var playback=Stopwatch.StartNew();
-                    for(int offset=0;offset<replaySamples.Length;offset+=320) {
-                        token.ThrowIfCancellationRequested();
-                        int count=Math.Min(320,replaySamples.Length-offset);
-                        QueueAudio(generation,replaySamples.AsSpan(offset,count).ToArray());
-                        // Absolute pacing prevents Windows timer rounding from adding
-                        // a delay to every block and truncating a time-bounded replay.
-                        var delay=TimeSpan.FromSeconds((offset+count)/16000d)-playback.Elapsed;
-                        if(delay>TimeSpan.Zero) await Task.Delay(delay,token);
-                    }
-                } catch(OperationCanceledException) { }
-            });
-        } else {
-            capture=createCapture();
-            if(!generationGate.IsCurrent(generation)) { Abort(); return; }
-            capture.Samples += samples => QueueAudio(generation,samples);
-            capture.Failed += error => CaptureFailed(generation,error);
-            if(!capture.Start(() => {
-                if(!TryBeginInput(generation)) return false;
-                Volatile.Write(ref inputEpoch,generation); return true;
-            })) { Abort(); return; }
-            captureActive=true;
-            CaptureStateChanged?.Invoke(generation,true);
-            if(!generationGate.IsCurrent(generation)) Abort();
+        lock(sessionGate) {
+            ObjectDisposedException.ThrowIf(disposed,this);
+            if(current is { StopRequested: false, Cancelled: false, InputClosed: false })
+                throw new InvalidOperationException("A recording is already capturing audio.");
+            if(recordings.Count>=256) throw new InvalidOperationException("Too many recordings are waiting for speech processing.");
+            var context=new RecordingContext(++nextGeneration,SavedAudioLimit);
+            recordings.Add(context.Generation,context);
+            Volatile.Write(ref current,context);
+            // The producer has its own lifetime. It can admit PCM while the model
+            // worker is still finishing an earlier recording on the shared engine.
+            context.CaptureTask=Task.Run(() => CaptureAsync(context));
+            work.Add(context);
+            return context.Generation;
         }
-    });
-        return generation;
     }
-    public async Task<string> StopRecordingAsync(CancellationToken cancellationToken=default)
+
+    public async Task<string> StopRecordingAsync(CancellationToken cancellationToken=default) =>
+        (await FinishRecordingAsync(cancellationToken).ConfigureAwait(false)).Text;
+
+    /// <summary>Detaches the recording selected at invocation, including its immutable audio-file identity.</summary>
+    public Task<SpeechRecordingResult> FinishRecordingAsync(CancellationToken cancellationToken=default)
     {
-        int stoppingGeneration=generationGate.Current;
-        // Revoke a queued/pending open immediately, before waiting for the release tail.
-        // A worker that already claimed the start keeps its normal captured tail.
-        Interlocked.CompareExchange(ref pendingInputGeneration,0,stoppingGeneration);
-        using var cancellation=cancellationToken.Register(() => { if(generationGate.IsCurrent(stoppingGeneration)) CancelRecording(); });
-        await Task.Delay(300,cancellationToken);
-        // Closing the producer first ensures all final WASAPI callbacks are queued
-        // before finalization. No hardware remains open while the model finishes.
-        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        Enqueue(() => {
-            try { if(generationGate.IsCurrent(stoppingGeneration)) CloseCapture(); closed.TrySetResult(); }
-            catch(Exception e) { faulted=true; Abort(); closed.TrySetException(e); }
-        });
-        await closed.Task.WaitAsync(cancellationToken);
-        var result = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        Enqueue(() => {
-            if(!generationGate.IsCurrent(stoppingGeneration)) { result.TrySetCanceled(new CancellationToken(true)); return; }
-            try {
-                if(faulted) throw new InvalidOperationException("Audio capture failed; nothing was pasted.");
-                if(stream==null) { result.SetResult(""); return; }
-                DrainCapturedAudio(stoppingGeneration, all: true);
-                cancellationToken.ThrowIfCancellationRequested();
-                if(!generationGate.IsCurrent(stoppingGeneration)) { result.TrySetCanceled(new CancellationToken(true)); return; }
-                if(faulted) throw new InvalidOperationException("Audio capture failed; nothing was pasted.");
-                stream.Accept(new float[16000]); stream.InputFinished();
-                var text=Decode().Trim();
-                cancellationToken.ThrowIfCancellationRequested();
-                if(!generationGate.IsCurrent(stoppingGeneration)) { result.TrySetCanceled(new CancellationToken(true)); return; }
-                if(faulted) throw new InvalidOperationException("Audio capture failed; nothing was pasted.");
-                recording?.Complete();
-                Volatile.Write(ref lastAudioFileName, recording?.FileName);
-                result.SetResult(text);
-            } catch(Exception e) { result.TrySetException(e); }
-            finally { Abort(); }
-        });
-        return await result.Task.WaitAsync(cancellationToken);
+        RecordingContext? context;
+        lock(sessionGate) {
+            ObjectDisposedException.ThrowIf(disposed,this);
+            context=current;
+            if(context==null) return Task.FromResult(new SpeechRecordingResult("",null,0));
+            lock(context.Gate) {
+                if(!context.StopRequested) {
+                    // Revoke a pending native open now, while a claimed input keeps
+                    // the existing 300 ms release tail and final driver packets.
+                    context.StopRequested=true;
+                    _=CloseAfterTailAsync(context);
+                }
+            }
+        }
+        return AwaitResultAsync(context,cancellationToken);
     }
+
+    async Task<SpeechRecordingResult> AwaitResultAsync(RecordingContext context,CancellationToken cancellationToken)
+    {
+        using var registration=cancellationToken.Register(() => CancelContext(context));
+        return await context.Result.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    static async Task CloseAfterTailAsync(RecordingContext context)
+    {
+        await Task.Delay(300).ConfigureAwait(false);
+        context.CloseRequested.TrySetResult();
+    }
+
+    public void CancelRecording(int generation)
+    {
+        RecordingContext? context;
+        lock(sessionGate) recordings.TryGetValue(generation,out context);
+        if(context!=null) CancelContext(context);
+    }
+
+    /// <summary>Cancels all recordings, for shutdown or an explicit resource unload.</summary>
     public void CancelRecording()
     {
-        // Cancellation cannot be lost behind a full audio queue. The worker checks this
-        // generation before every action; a wake-up only helps when the queue is empty.
-        generationGate.Cancel();
-        if(disposed) return;
-        try { work.TryAdd(() => { if(stream != null && !generationGate.IsCurrent(activeEpoch)) Abort(); }); } catch(InvalidOperationException) { }
+        RecordingContext[] contexts;
+        lock(sessionGate) contexts=recordings.Values.ToArray();
+        foreach(var context in contexts) CancelContext(context);
     }
-    void Enqueue(Action action) { ObjectDisposedException.ThrowIf(disposed,this); if(!work.TryAdd(action)) { CancelRecording(); throw new InvalidOperationException("Audio queue is full."); } }
-    bool TryBeginInput(int generation) => generationGate.IsCurrent(generation) && Interlocked.CompareExchange(ref pendingInputGeneration,0,generation)==generation;
-    void CaptureFailed(int generation, Exception error)
+
+    void CancelContext(RecordingContext context)
     {
-        if(disposed || Volatile.Read(ref inputEpoch)!=generation || !generationGate.IsCurrent(generation)) return;
-        faulted=true;
-        try { work.TryAdd(() => { if(activeEpoch==generation) Abort(); }); } catch(InvalidOperationException) { }
-        Error?.Invoke(error.Message);
-    }
-    void QueueAudio(int generation, float[] samples)
-    {
-        if(disposed || samples.Length==0 || Volatile.Read(ref inputEpoch)!=generation || !generationGate.IsCurrent(generation)) return;
-        bool overflow=false, schedule=false, ready=false;
-        lock(audioGate) {
-            if(disposed || Volatile.Read(ref inputEpoch)!=generation || !generationGate.IsCurrent(generation)) return;
-            if(samples.Length > MaximumBufferedAudioSamples-bufferedAudioSamples) overflow=true;
-            else {
-                capturedAudio.Enqueue((generation,samples)); bufferedAudioSamples+=samples.Length;
-                Interlocked.Add(ref admittedSamples,samples.Length);
-                if(readyInputEpoch!=generation) { readyInputEpoch=generation; ready=true; }
-                if(!audioDrainQueued) { audioDrainQueued=true; schedule=true; }
-            }
+        lock(context.Gate) {
+            if(context.Result.Task.IsCompleted) return;
+            context.Cancelled=true;
+            context.StopRequested=true;
+            context.CloseRequested.TrySetResult();
         }
-        if(overflow) CaptureFailed(generation,new InvalidOperationException("More than two minutes of captured audio is waiting for speech processing. Cancel and retry."));
-        else {
-            if(ready && !disposed && Volatile.Read(ref inputEpoch)==generation && generationGate.IsCurrent(generation)) InputReady?.Invoke(generation);
-            if(schedule) QueueAudioDrain(generation);
-            PublishLevel(generation,samples);
+        DiscardAudio(context);
+        context.Wake.Release();
+    }
+
+    bool TryBeginInput(RecordingContext context)
+    {
+        lock(context.Gate) {
+            if(disposed || context.Cancelled || context.StopRequested || context.Failure!=null) return false;
+            context.InputClaimed=true;
+            return true;
         }
     }
-    void PublishLevel(int generation, float[] samples)
+
+    async Task CaptureAsync(RecordingContext context)
     {
-        long now=Stopwatch.GetTimestamp(), previous=Interlocked.Read(ref lastLevelAt);
-        if(now-previous < Stopwatch.Frequency/20 || Interlocked.CompareExchange(ref lastLevelAt,now,previous)!=previous) return;
-        if(disposed || Volatile.Read(ref inputEpoch)!=generation || !generationGate.IsCurrent(generation)) return;
-        Level?.Invoke(Math.Min(1,(float)Math.Sqrt(samples.Sum(x=>(double)x*x)/samples.Length)*4));
-    }
-    void QueueAudioDrain(int generation)
-    {
-        try { if(!work.TryAdd(() => DrainCapturedAudio(generation))) CaptureFailed(generation,new InvalidOperationException("Audio processing fell behind. Cancel and retry.")); }
-        catch(InvalidOperationException) { /* shutdown raced a capture callback */ }
-    }
-    void DrainCapturedAudio(int generation, bool all=false)
-    {
-        do {
-            (int Generation, float[] Samples) block;
-            lock(audioGate) {
-                if(activeEpoch!=generation || !generationGate.IsCurrent(generation)) return;
-                if(capturedAudio.Count==0) { audioDrainQueued=false; return; }
-                block=capturedAudio.Dequeue(); bufferedAudioSamples-=block.Samples.Length;
-            }
-            Feed(block.Generation,block.Samples);
-        } while(all && !faulted && generationGate.IsCurrent(generation));
-        bool schedule=false;
-        lock(audioGate) {
-            if(activeEpoch==generation) {
-                schedule=!faulted && generationGate.IsCurrent(generation) && capturedAudio.Count>0;
-                if(!schedule) audioDrainQueued=false;
+        IMicrophoneCapture? input=null;
+        bool active=false;
+        try {
+            if(context.Cancelled || context.StopRequested || disposed) return;
+            if(replaySamples is { } samples) {
+                if(!TryBeginInput(context)) return;
+                context.StartSucceeded=true;
+                var playback=Stopwatch.StartNew();
+                for(int offset=0;offset<samples.Length;offset+=320) {
+                    if(context.CloseRequested.Task.IsCompleted) break;
+                    int count=Math.Min(320,samples.Length-offset);
+                    QueueAudio(context,samples.AsSpan(offset,count).ToArray());
+                    var delay=TimeSpan.FromSeconds((offset+count)/16000d)-playback.Elapsed;
+                    if(delay>TimeSpan.Zero) await Task.WhenAny(Task.Delay(delay),context.CloseRequested.Task).ConfigureAwait(false);
+                }
+                await context.CloseRequested.Task.ConfigureAwait(false);
+            } else {
+                input=createCapture();
+                if(context.Cancelled || context.StopRequested || disposed) return;
+                input.Samples += samples => QueueAudio(context,samples);
+                input.Failed += error => CaptureFailed(context,error);
+                if(!input.Start(() => TryBeginInput(context))) return;
+                context.StartSucceeded=true;
+                active=true;
+                CaptureStateChanged?.Invoke(context.Generation,true);
+                await context.CloseRequested.Task.ConfigureAwait(false);
             }
         }
-        // One wake-up per recording yields between blocks to stop/cancel controls.
-        if(schedule) QueueAudioDrain(generation);
-    }
-    void Feed(int generation, float[] samples)
-    {
-        if(stream==null || faulted || activeEpoch!=generation || !generationGate.IsCurrent(generation)) return;
-        Accept(samples);
-    }
-    void Accept(float[] samples)
-    {
-        recording?.WriteSamples(samples);
-        stream!.Accept(samples);
-        Decode();
-    }
-    string Decode() { var text=stream!.Decode(); if(generationGate.IsCurrent(activeEpoch) && text!=lastCaption) { lastCaption=text; CaptionForRecording?.Invoke(activeEpoch,text); Caption?.Invoke(text); } return text; }
-    void CloseCapture()
-    {
-        replayCancellation?.Cancel(); replayCancellation?.Dispose(); replayCancellation=null;
-        var input=capture; capture=null;
-        bool wasActive=captureActive; captureActive=false;
-        try { input?.Stop(); }
+        catch(Exception error) { CaptureFailed(context,error); }
         finally {
-            try { input?.Dispose(); }
+            // Stop and Dispose can emit the final PCM. Admit it until both finish;
+            // only this context is closed, even when a newer microphone is active.
+            try { input?.Stop(); }
+            catch(Exception error) { CaptureFailed(context,error); }
             finally {
-                Volatile.Write(ref inputEpoch,0);
-                if(wasActive) CaptureStateChanged?.Invoke(activeEpoch,false);
-            }
-        }
-    }
-    void Abort()
-    {
-        var audio=recording; recording=null;
-        try { CloseCapture(); }
-        finally {
-            try { audio?.Dispose(); }
-            finally {
-                try { stream?.Dispose(); }
+                try { input?.Dispose(); }
+                catch(Exception error) { CaptureFailed(context,error); }
                 finally {
-                    stream=null; lastCaption=null;
-                    lock(audioGate) { capturedAudio.Clear(); bufferedAudioSamples=0; audioDrainQueued=false; }
+                    context.InputClosed=true;
+                    if(active) CaptureStateChanged?.Invoke(context.Generation,false);
+                    context.Wake.Release();
                 }
             }
         }
     }
+
+    void CaptureFailed(RecordingContext context,Exception error)
+    {
+        bool publish;
+        lock(context.Gate) {
+            if(context.Cancelled || context.InputClosed || disposed) return;
+            publish=context.Failure==null;
+            context.Failure ??= error;
+            context.StopRequested=true;
+            context.CloseRequested.TrySetResult();
+        }
+        DiscardAudio(context);
+        context.Wake.Release();
+        if(publish) {
+            ErrorForRecording?.Invoke(context.Generation,error.Message);
+            Error?.Invoke(error.Message);
+        }
+    }
+
+    void QueueAudio(RecordingContext context,float[] samples)
+    {
+        if(samples.Length==0 || disposed || context.Cancelled || context.Failure!=null || context.InputClosed || !context.InputClaimed) return;
+        bool overflow=false,ready=false;
+        lock(audioGate) {
+            if(disposed || context.Cancelled || context.Failure!=null || context.InputClosed) return;
+            if(samples.Length>MaximumBufferedAudioSamples-bufferedAudioSamples) overflow=true;
+            else {
+                context.Audio.Enqueue(samples); bufferedAudioSamples+=samples.Length;
+                Interlocked.Add(ref context.AdmittedSamples,samples.Length);
+                if(!context.Ready) { context.Ready=true; ready=true; }
+            }
+        }
+        if(overflow) CaptureFailed(context,new InvalidOperationException("More than two minutes of captured audio is waiting for speech processing. Cancel and retry."));
+        else {
+            // Readiness precedes the model wake-up, including the first block when
+            // this recording is waiting behind another recording's final decode.
+            if(ready) {
+                try { if(!context.Cancelled && context.Failure==null && !disposed) InputReady?.Invoke(context.Generation); }
+                finally { context.ReadinessPublished.TrySetResult(); }
+            }
+            context.Wake.Release();
+            PublishLevel(context,samples);
+        }
+    }
+
+    void PublishLevel(RecordingContext context,float[] samples)
+    {
+        long now=Stopwatch.GetTimestamp(),previous=Interlocked.Read(ref context.LastLevelAt);
+        if(now-previous<Stopwatch.Frequency/20 || Interlocked.CompareExchange(ref context.LastLevelAt,now,previous)!=previous) return;
+        if(disposed || context.Cancelled || context.Failure!=null || context.InputClosed) return;
+        float level=Math.Min(1,(float)Math.Sqrt(samples.Sum(x=>(double)x*x)/samples.Length)*4);
+        LevelForRecording?.Invoke(context.Generation,level);
+        Level?.Invoke(level);
+    }
+
+    void ProcessRecording(RecordingContext context)
+    {
+        ISpeechStream? stream=null;
+        SavedAudioRecording? recording=null;
+        SpeechRecordingResult? result=null;
+        Exception? failure=null;
+        try {
+            ThrowIfUnavailable(context);
+            stream=createStream();
+            ThrowIfUnavailable(context);
+            // Only the model worker owns writers, so retention never deletes the
+            // next recording's still-open WAV while completing an older one.
+            var directory=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Typr","audio");
+            recording=SavedAudioRecording.Start(directory,context.SavedAudioLimit);
+            while(true) {
+                ThrowIfUnavailable(context);
+                float[]? samples=null;
+                bool inputClosed;
+                lock(audioGate) {
+                    if(context.Audio.Count>0) {
+                        samples=context.Audio.Dequeue(); bufferedAudioSamples-=samples.Length;
+                    }
+                    inputClosed=context.InputClosed;
+                }
+                if(samples!=null) {
+                    context.ReadinessPublished.Task.GetAwaiter().GetResult();
+                    ThrowIfUnavailable(context);
+                    recording?.WriteSamples(samples);
+                    stream.Accept(samples);
+                    ThrowIfUnavailable(context);
+                    Decode(context,stream);
+                    continue;
+                }
+                if(inputClosed) break;
+                context.Wake.Wait();
+            }
+            context.CaptureTask.GetAwaiter().GetResult();
+            ThrowIfUnavailable(context);
+            if(!context.StartSucceeded) result=new SpeechRecordingResult("",null,context.Generation);
+            else {
+                stream.Accept(new float[16000]);
+                ThrowIfUnavailable(context);
+                stream.InputFinished();
+                ThrowIfUnavailable(context);
+                string text=Decode(context,stream).Trim();
+                ThrowIfUnavailable(context);
+                recording?.Complete();
+                context.AudioFileName=recording?.FileName;
+                result=new SpeechRecordingResult(text,context.AudioFileName,context.Generation);
+            }
+        }
+        catch(OperationCanceledException error) { failure=error; }
+        catch(Exception error) {
+            failure=error;
+            CaptureFailed(context,error);
+        }
+        finally {
+            // Capture shutdown is independent of a native decode. On failure this
+            // also fences callbacks before deleting abandoned audio or a stream.
+            if(failure!=null) context.CloseRequested.TrySetResult();
+            try { context.CaptureTask.GetAwaiter().GetResult(); }
+            catch(Exception error) { failure ??= error; }
+            try { recording?.Dispose(); }
+            catch(Exception error) { failure ??= error; }
+            try { stream?.Dispose(); }
+            catch(Exception error) { failure ??= error; }
+            DiscardAudio(context);
+            if(context.Cancelled || failure is OperationCanceledException) context.Result.TrySetCanceled(new CancellationToken(true));
+            else if(failure!=null) context.Result.TrySetException(failure);
+            else if(context.Failure is { } captureFailure) context.Result.TrySetException(captureFailure);
+            else context.Result.TrySetResult(result!);
+            lock(sessionGate) recordings.Remove(context.Generation);
+        }
+    }
+
+    void DiscardAudio(RecordingContext context)
+    {
+        lock(audioGate) {
+            while(context.Audio.TryDequeue(out var samples)) bufferedAudioSamples-=samples.Length;
+        }
+    }
+
+    static void ThrowIfUnavailable(RecordingContext context)
+    {
+        if(context.Cancelled) throw new OperationCanceledException();
+        if(context.Failure is { } error) throw error;
+    }
+
+    string Decode(RecordingContext context,ISpeechStream stream)
+    {
+        string text=stream.Decode();
+        if(!context.Cancelled && context.Failure==null && text!=context.LastCaption) {
+            context.LastCaption=text;
+            CaptionForRecording?.Invoke(context.Generation,text); Caption?.Invoke(text);
+        }
+        return text;
+    }
+
     public void Dispose()
     {
-        if(disposed)return; disposed=true; generationGate.Cancel();
-        work.CompleteAdding(); worker.GetAwaiter().GetResult(); Abort(); recognizer?.Dispose(); gpuEngine?.Dispose(); work.Dispose();
+        lock(sessionGate) {
+            if(disposed) return;
+            disposed=true;
+            foreach(var context in recordings.Values) CancelContext(context);
+            work.CompleteAdding();
+        }
+        worker.GetAwaiter().GetResult(); recognizer?.Dispose(); gpuEngine?.Dispose(); work.Dispose();
+    }
+
+    sealed class RecordingContext(int generation,int savedAudioLimit)
+    {
+        public int Generation { get; }=generation;
+        public int SavedAudioLimit { get; }=savedAudioLimit;
+        public object Gate { get; }=new();
+        public Queue<float[]> Audio { get; }=new();
+        public SemaphoreSlim Wake { get; }=new(0);
+        public TaskCompletionSource CloseRequested { get; }=new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReadinessPublished { get; }=new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<SpeechRecordingResult> Result { get; }=new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task CaptureTask { get; set; }=Task.CompletedTask;
+        public volatile bool StopRequested,Cancelled,InputClaimed,StartSucceeded,InputClosed;
+        public volatile Exception? Failure;
+        public bool Ready;
+        public long AdmittedSamples,LastLevelAt;
+        public string? LastCaption,AudioFileName;
     }
 }
 

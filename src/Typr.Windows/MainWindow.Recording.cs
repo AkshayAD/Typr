@@ -12,16 +12,17 @@ public partial class MainWindow
     private DictationMode _startingMode;
     private bool _hookRecordingEnabled;
     private bool _initializingInput;
+    private bool _keyboardCapture;
 
     // A keyboard listener needs no microphone or speech model. Keep it available
     // while speech is unloaded so the first deliberate shortcut can prepare it.
     private void ConfigureDictationHook()
     {
         if (!_desktopIntegration || !IsLoaded || _closing) return;
-        if (SpeechPausedForGaming && !_recording && !_busy) { _hook?.Dispose(); _hook = null; return; }
+        if (SpeechPausedForGaming && !_recording && !_busy && !HasPendingDictationOutput) { _hook?.Dispose(); _hook = null; return; }
         bool enabled = EffectiveShortcutSettings.CommandShortcutsEnabled;
         if (_hook != null && _hookRecordingEnabled == enabled) return;
-        if (!_settings.CommandShortcutsEnabled && (_recordingStart != null || _recording || _busy)) CancelCapture();
+        if (!_settings.CommandShortcutsEnabled && (_recordingStart != null || _recording || _busy || HasPendingDictationOutput)) CancelAllDictation();
         _hook?.Dispose(); _hook = null;
         try
         {
@@ -30,7 +31,7 @@ public partial class MainWindow
             _hook.Updated += (update, foreground) => Dispatcher.BeginInvoke(() => HandleHotkey(update, foreground));
             _hook.EscapePressed += () => Dispatcher.BeginInvoke(() =>
             {
-                if (_recordingStart != null || _recording || _busy) CancelCapture();
+                if (_recordingStart != null || _recording || _busy || HasPendingDictationOutput) CancelCapture();
             });
             RefreshReadiness();
         }
@@ -40,6 +41,7 @@ public partial class MainWindow
     private void CancelPendingRecordingStart()
     {
         var pending = _recordingStart; _recordingStart = null;
+        if (pending != null) _keyboardCapture = false;
         pending?.Cancel(); pending?.Dispose();
     }
 
@@ -47,6 +49,7 @@ public partial class MainWindow
     {
         if (SpeechPausedForGaming || _resourceTransitioning) { StatusText.Text = "Speech is paused for gaming. Choose Everyday in Settings to resume."; return; }
         if (_closing || _recording || _busy || _recordingStart != null || _historyOperation != null) return;
+        _keyboardCapture = false;
         if (mode == DictationMode.VoiceEdit) { StatusText.Text = "Voice editing isn't available. Nothing was recorded."; return; }
         if (_speechFaulted && _speech != null) { StatusText.Text = "Unload speech in Settings, check the selected input, then try again."; return; }
         var pending = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);

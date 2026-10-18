@@ -6,10 +6,10 @@
   #error OutputDir must be supplied.
 #endif
 #ifndef AppVersion
-  #define AppVersion "0.1.1"
+  #define AppVersion "0.1.2"
 #endif
 #ifndef FileVersion
-  #define FileVersion "0.1.1.0"
+  #define FileVersion "0.1.2.0"
 #endif
 
 [Setup]

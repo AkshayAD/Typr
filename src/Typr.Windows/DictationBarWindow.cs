@@ -40,7 +40,7 @@ internal sealed class DictationBarWindow : Window
     private ToolTip? _openHint;
     private string[] _hoverActions = ["HoldToTalk", "PasteLast", "ToggleMicrophone", "ToggleCaptions"];
     private string[] _contextActions = ["OpenWorkspace", "ToggleMicrophone", "PasteLast", "ToggleCaptions", "HideBar"];
-    private bool _captionsEnabled = true, _micReady, _recording, _inputActive, _busy, _expanded, _contextOpen, _pointerInside;
+    private bool _captionsEnabled = true, _micReady, _recording, _inputActive, _busy, _canStartWhileBusy, _expanded, _contextOpen, _pointerInside;
     private bool _pointerDown, _dragging, _holdActive, _positionSet, _closed, _actionsDirty, _primaryDirty;
     private bool _allowButtonRecording = true;
     private BarDockEdge _dockEdge = BarDockEdge.Bottom;
@@ -163,10 +163,10 @@ internal sealed class DictationBarWindow : Window
         UpdatePrimary(); ApplyBackground(); ApplyLayout();
         if (visible) ShowBar(); else HideBar();
     }
-    public void UpdateState(bool micReady, bool recording, bool busy, string? caption, string status, bool inputActive = false)
+    public void UpdateState(bool micReady, bool recording, bool busy, string? caption, string status, bool inputActive = false, bool canStartWhileBusy = false)
     {
-        bool changed = _micReady != micReady || _recording != recording || _busy != busy;
-        _micReady = micReady; _recording = recording; _inputActive = inputActive; _busy = busy;
+        bool changed = _micReady != micReady || _recording != recording || _busy != busy || _canStartWhileBusy != canStartWhileBusy;
+        _micReady = micReady; _recording = recording; _inputActive = inputActive; _busy = busy; _canStartWhileBusy = canStartWhileBusy;
         AutomationProperties.SetHelpText(_shell, status); _caption.Text = caption ?? "";
         if (changed) { UpdatePrimary(); RebuildActions(); }
         RefreshActivity(); ApplyLayout(true);
@@ -294,7 +294,7 @@ internal sealed class DictationBarWindow : Window
     private void RefreshActivity()
     {
         if (_pointerDown) { _primaryDirty = true; return; }
-        var activity = _busy ? BarActivity.Finishing : _recording ? (_inputActive ? BarActivity.Listening : BarActivity.Opening) : BarActivity.Idle;
+        var activity = _recording ? (_inputActive ? BarActivity.Listening : BarActivity.Opening) : _busy ? BarActivity.Finishing : BarActivity.Idle;
         if (_rest is BarWaveform rest) rest.SetActivity(activity);
         foreach (var wave in PrimaryWaves()) wave.SetActivity(activity);
     }
@@ -311,8 +311,8 @@ internal sealed class DictationBarWindow : Window
         _ => ("\uE712", "Bar actions", "Show your right-click actions; drag any control to move")
     };
     private bool CanExecute(string action) => action switch {
-        "HoldToTalk" => _allowButtonRecording && _micReady && !_recording && !_busy,
-        "ToggleRecording" => _recording || _allowButtonRecording && _micReady && !_busy,
+        "HoldToTalk" => _allowButtonRecording && _micReady && !_recording && (!_busy || _canStartWhileBusy),
+        "ToggleRecording" => _recording || _allowButtonRecording && _micReady && (!_busy || _canStartWhileBusy),
         "Cancel" => _recording || _busy, "PasteLast" => !_recording && !_busy, _ => true
     };
     internal static string[] FilterActions(IEnumerable<string>? actions) => (actions ?? [])
@@ -361,7 +361,8 @@ internal sealed class DictationBarWindow : Window
     private void UpdatePrimary()
     {
         if (_pointerDown) { _primaryDirty = true; return; }
-        _primaryDirty = false; SetButtonContent(_primary, _busy ? "Cancel" : _micReady || _recording ? "ToggleRecording" : "ToggleMicrophone", true); RefreshActivity();
+        string action = _recording ? "ToggleRecording" : _busy ? (_canStartWhileBusy ? "ToggleRecording" : "Cancel") : _micReady ? "ToggleRecording" : "ToggleMicrophone";
+        _primaryDirty = false; SetButtonContent(_primary, action, true); RefreshActivity();
     }
     private void RefreshDeferredControls() { if (_actionsDirty) RebuildActions(); if (_primaryDirty) UpdatePrimary(); }
     internal void SetPointerInside(bool inside)

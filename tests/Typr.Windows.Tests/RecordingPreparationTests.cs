@@ -23,7 +23,7 @@ public sealed class RecordingPreparationTests(WpfFixture fixture)
             using var speech = new SpeechSession(() => new FakeStream(), () => { ++opens; return new FakeInput(); });
             var preparation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             Set(window, "_speech", speech); Set(window, "_loading", true); Set(window, "_speechLoadingTask", preparation.Task);
-            var start = Invoke<Task>(window, "StartCaptureAsync", DictationMode.Polish, (nint)0, true, false);
+            var start = Invoke<Task>(window, "StartCaptureAsync", DictationMode.Polish, (nint)0, true, false); Set(window, "_keyboardCapture", true);
             Assert.False(start.IsCompleted); Assert.Equal(0, opens);
             Assert.Equal(Visibility.Visible, Control<Button>(window, "CancelButton").Visibility);
             if (cancellation == "release")
@@ -45,7 +45,7 @@ public sealed class RecordingPreparationTests(WpfFixture fixture)
             using var speech = new SpeechSession(() => new FakeStream(), () => { ++opens; return input; });
             var preparation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             Set(window, "_speech", speech); Set(window, "_loading", true); Set(window, "_speechLoadingTask", preparation.Task);
-            var start = Invoke<Task>(window, "StartCaptureAsync", DictationMode.Polish, (nint)0, true, false);
+            var start = Invoke<Task>(window, "StartCaptureAsync", DictationMode.Polish, (nint)0, true, false); Set(window, "_keyboardCapture", true);
             Invoke(window, "HandleHotkey", new HotkeyUpdate(RecordingState.Holding, DictationMode.Raw, [HotkeyAction.ModeChanged], false, false), (nint)0);
             Assert.Equal(0, opens);
             Set(window, "_loading", false); preparation.SetResult(); Complete(start); Complete(input.Started.Task);
@@ -109,7 +109,7 @@ public sealed class RecordingPreparationTests(WpfFixture fixture)
             using var speech = new SpeechSession(() => new FakeStream(), () => new FakeInput());
             using var previous = new SpeechSession(() => new FakeStream(), () => new FakeInput());
             Set(window, "_speech", speech); Set(window, "_recording", true); Set(window, "_speechGeneration", 21);
-            Set(window, "_inputActive", true); Set(window, "_activeInputGeneration", 21);
+            Set(window, "_inputActive", true);
             Invoke(window, "RefreshReadiness");
             Assert.Equal("STARTING MICROPHONE", Control<TextBlock>(window, "CaptureState").Text);
             Assert.False(Get<System.Windows.Threading.DispatcherTimer>(window, "_clock").IsEnabled);

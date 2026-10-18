@@ -10,6 +10,42 @@ public sealed class ClipboardTransactionTests
     static ClipboardReplacement Success() => new(true, new(new Dictionary<uint, byte[]> { [13] = [1, 2] }), 123, "");
 
     [Fact]
+    public async Task ActiveCaptureDefersBeforeInspectingAnUnconfirmedDestination()
+    {
+        var result = await new ClipboardDelivery().DeliverAsync("Queued words", new(0, null, null, false, false),
+            CancellationToken.None, captureActive: () => true);
+        Assert.True(result.Deferred);
+        Assert.False(result.Confirmed);
+    }
+
+    [Theory]
+    [InlineData(0L, 0U, true)]
+    [InlineData(1L, 0U, false)]
+    [InlineData(0L, 1U, false)]
+    [InlineData(1L, 4U, false)]
+    public void DeferralRequiresNoInputAttemptOrSentKeys(long attemptedAt, uint sent, bool expected)
+        => Assert.Equal(expected, ClipboardDelivery.CanDeferPaste(attemptedAt, sent));
+
+    [Theory]
+    [InlineData(ClipboardRestoreResult.Restored, true)]
+    [InlineData(ClipboardRestoreResult.ChangedByUser, true)]
+    [InlineData(ClipboardRestoreResult.BusyOrFailed, false)]
+    internal async Task DeferralWaitsForOwnedClipboardCleanupAndFailedCleanupCannotRetry(ClipboardRestoreResult restoration, bool deferred)
+    {
+        var cleanup = new TaskCompletionSource<ClipboardRestoreResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int restores = 0;
+        var pending = ClipboardDelivery.CompleteDeferredPasteAsync(() => { ++restores; return cleanup.Task; });
+        Assert.Equal(1, restores);
+        Assert.False(pending.IsCompleted);
+        cleanup.SetResult(restoration);
+        var result = await pending.WaitAsync(Timeout);
+        Assert.Equal(deferred, result.Deferred);
+        Assert.False(result.Confirmed);
+        if (!deferred) Assert.Contains("couldn't be restored", result.Message);
+        Assert.Equal(1, restores);
+    }
+
+    [Fact]
     public async Task DelayedReadTimesOutAndCannotWriteWhenItFinallyReturns()
     {
         using var release = new ManualResetEventSlim();

@@ -138,6 +138,39 @@ public sealed class DictationBarTests(WpfFixture fixture)
         finally { bar.Close(); }
     });
 
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void QueuedOutputAllowsTheNextRecordingAndCurrentRecordingKeepsListeningFeedback(bool allowButtonRecording) => fixture.Run(() => {
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
+        try {
+            bar.Configure(false, true, ["HoldToTalk", "Cancel", "PasteLast"], [], 100, 500, allowButtonRecording: allowButtonRecording);
+            var frame = new Rect(bar.Left, bar.Top, bar.Width, bar.Height);
+            bar.UpdateState(true, false, true, null, "Polishing previous words", canStartWhileBusy: true);
+            Assert.Equal(allowButtonRecording, ButtonNamed("Start dictation").IsEnabled);
+            Assert.Equal(allowButtonRecording, ButtonNamed("Hold to talk").IsEnabled);
+            Assert.True(ButtonNamed("Cancel").IsEnabled);
+            Assert.False(ButtonNamed("Paste last").IsEnabled);
+            Assert.Contains(Descendants<BarWaveform>(bar), wave => wave.Activity == BarActivity.Finishing);
+
+            bar.UpdateState(true, true, true, null, "Opening microphone", canStartWhileBusy: true);
+            Assert.True(ButtonNamed("Finish dictation").IsEnabled);
+            Assert.False(ButtonNamed("Hold to talk").IsEnabled);
+            Assert.All(Descendants<BarWaveform>(bar), wave => Assert.Equal(BarActivity.Opening, wave.Activity));
+            bar.UpdateState(true, true, true, null, "Listening", inputActive: true, canStartWhileBusy: true);
+            Assert.All(Descendants<BarWaveform>(bar), wave => Assert.Equal(BarActivity.Listening, wave.Activity));
+
+            bar.UpdateState(true, false, true, null, "Exclusive operation", canStartWhileBusy: false);
+            Assert.DoesNotContain(Descendants<Button>(bar), button => AutomationProperties.GetName(button) == "Start dictation");
+            Assert.False(ButtonNamed("Hold to talk").IsEnabled);
+            Assert.False(bar.IsExpanded);
+            Assert.Equal(frame, new Rect(bar.Left, bar.Top, bar.Width, bar.Height));
+            Assert.False(bar.IsVisible);
+
+            Button ButtonNamed(string name) => Descendants<Button>(bar).Single(button => AutomationProperties.GetName(button) == name);
+        }
+        finally { bar.Close(); }
+    });
+
     private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
     {
         if (root is T match) yield return match;

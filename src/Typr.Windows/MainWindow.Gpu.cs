@@ -13,7 +13,7 @@ public partial class MainWindow
     private bool GpuFast => _settings.GpuSpeechLatency == "Fast";
     private string SelectedGpuDirectory => string.IsNullOrWhiteSpace(GpuModelPathBox.Text)
         ? _settings.GpuSpeechModelPath ?? NeMoSpeechDownload.DefaultDirectory : GpuModelPathBox.Text.Trim();
-    private bool CanChangeGpuSpeech => !_closing && _speech == null && !_loading && !_busy && !_recording &&
+    private bool CanChangeGpuSpeech => !_closing && _speech == null && !_loading && !_busy && !HasPendingDictationOutput && !_recording &&
         _recordingStart == null && _download == null && !SpeechPausedForGaming && !_resourceTransitioning;
 
     private void InitializeGpuSpeech()
