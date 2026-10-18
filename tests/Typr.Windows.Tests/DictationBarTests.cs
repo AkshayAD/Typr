@@ -30,7 +30,7 @@ public sealed class DictationBarTests(WpfFixture fixture)
     }
 
     [Fact] public void ClickExecutesOnReleaseAndDraggingAnActionNeverExecutesIt() => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             var actions = new List<string>(); var positions = new List<Point>();
             bar.ActionRequested += actions.Add; bar.PositionChanged += positions.Add;
@@ -52,7 +52,7 @@ public sealed class DictationBarTests(WpfFixture fixture)
     });
 
     [Fact] public void HoldFinishesOnceAndDraggingAHoldCancelsWithoutFinishing() => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             var actions = new List<string>(); bar.ActionRequested += actions.Add;
             bar.UpdateState(true, false, false, null, "Ready");
@@ -70,7 +70,7 @@ public sealed class DictationBarTests(WpfFixture fixture)
     });
 
     [Fact] public void HideDuringHoldCancelsAndLateReleaseDoesNothing() => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             var actions = new List<string>(); bar.ActionRequested += actions.Add;
             bar.UpdateState(true, false, false, null, "Ready");
@@ -82,16 +82,16 @@ public sealed class DictationBarTests(WpfFixture fixture)
     });
 
     [Fact] public void ExpandingKeepsCompactControlsAnchoredAndHonorsConfiguredActionLists() => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             bar.Configure(false, true, ["PasteLast", "ToggleCaptions"], ["HideBar"], 100, 500);
             var anchor = bar.CompactPosition;
-            double compactBottom = bar.Top + bar.Height;
+            var compactFrame = new Rect(bar.Left, bar.Top, bar.Width, bar.Height);
             bar.SetPointerInside(true);
             Assert.True(bar.IsExpanded);
             Assert.Equal(new Size(192, 32), new Size(bar.Width, bar.Height));
             Assert.Equal(anchor, bar.CompactPosition);
-            Assert.Equal(compactBottom, bar.Top + bar.Height);
+            Assert.True(new Rect(bar.Left, bar.Top, bar.Width, bar.Height).Contains(compactFrame));
             var labels = Descendants<Button>(bar).Select(AutomationProperties.GetName).ToArray();
             Assert.Contains("Paste last", labels);
             Assert.Contains("Hide captions", labels);
@@ -102,7 +102,7 @@ public sealed class DictationBarTests(WpfFixture fixture)
 
     [Fact] public void NativeWindowIsNonActivatingWithoutDisplayingOrFocusingIt() => fixture.Run(() => {
         var foreground = NativeMethods.GetForegroundWindow();
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             var handle = new WindowInteropHelper(bar).EnsureHandle();
             long style = NativeMethods.GetWindowLongPtr(handle, NativeMethods.GwlExstyle).ToInt64();
@@ -117,7 +117,7 @@ public sealed class DictationBarTests(WpfFixture fixture)
     });
 
     [Fact] public void CaptionUpdatesKeepControlsStableAndStateChangesWaitForPointerRelease() => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             bar.Configure(false, true, ["PasteLast", "Cancel"], ["HideBar"], 100, 200);
             bar.UpdateState(true, false, false, null, "Ready");

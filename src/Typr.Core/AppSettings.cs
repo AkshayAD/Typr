@@ -19,6 +19,9 @@ public sealed record AppSettings
     public string SpeechResourceMode { get; init; } = "Automatic";
     public int SavedAudioLimit { get; init; }
     public string? SpeechModelPath { get; init; }
+    public string SpeechAcceleration { get; init; } = "Automatic";
+    public string? GpuSpeechModelPath { get; init; }
+    public string GpuSpeechLatency { get; init; } = "Quality";
     public string Theme { get; init; } = "System";
     public string Accent { get; init; } = "Iris";
     public bool SaveHistory { get; init; }
@@ -33,6 +36,7 @@ public sealed record AppSettings
     public int PolishTimeoutSeconds { get; init; } = 30;
     public double? BarLeft { get; init; }
     public double? BarTop { get; init; }
+    public string? BarDockEdge { get; init; }
     public double BarOpacity { get; init; } = .78;
     public double BarScale { get; init; } = 1;
     public int BarHoverDelay { get; init; } = 150;
@@ -79,6 +83,9 @@ public static class SettingsMigrator
             CaptionMaxCharacters = Math.Clamp(settings.CaptionMaxCharacters, 10, 120),
             CpuThreads = Math.Clamp(settings.CpuThreads, 2, 4),
             SpeechResourceMode = CanonicalChoice(settings.SpeechResourceMode, "Automatic", "Everyday", "Gaming"),
+            SpeechAcceleration = CanonicalChoice(settings.SpeechAcceleration, "Automatic", "CPU"),
+            GpuSpeechModelPath = string.IsNullOrWhiteSpace(settings.GpuSpeechModelPath) ? null : settings.GpuSpeechModelPath.Trim(),
+            GpuSpeechLatency = CanonicalChoice(settings.GpuSpeechLatency, "Quality", "Fast"),
             SavedAudioLimit = Math.Clamp(settings.SavedAudioLimit, 0, 200),
             Theme = CanonicalChoice(settings.Theme, "System", "Light", "Dark"),
             Accent = CanonicalChoice(settings.Accent, "Iris", "Forest", "Ocean"),
@@ -91,6 +98,7 @@ public static class SettingsMigrator
             PolishTimeoutSeconds = Math.Clamp(settings.PolishTimeoutSeconds, 5, 120),
             BarLeft = settings.BarLeft is { } left && double.IsFinite(left) ? left : null,
             BarTop = settings.BarTop is { } top && double.IsFinite(top) ? top : null,
+            BarDockEdge = new[] { "Left", "Right", "Top", "Bottom" }.FirstOrDefault(edge => edge.Equals(settings.BarDockEdge?.Trim(), StringComparison.OrdinalIgnoreCase)),
             BarOpacity = double.IsFinite(settings.BarOpacity) ? Math.Clamp(settings.BarOpacity, .2, 1) : .78,
             BarScale = settings.BarScale is .85 or 1 or 1.15 ? settings.BarScale : 1,
             BarHoverDelay = settings.BarHoverDelay is 0 or 150 or 300 or 500 ? settings.BarHoverDelay : 150,
@@ -141,11 +149,12 @@ public static class SettingsMigrator
             nameof(AppSettings.LiveCaptionsEnabled), nameof(AppSettings.BarVisible), nameof(AppSettings.CaptionOpacity),
             nameof(AppSettings.CaptionMaxLines), nameof(AppSettings.CaptionMaxCharacters), nameof(AppSettings.CpuThreads), nameof(AppSettings.SpeechResourceMode),
             nameof(AppSettings.SavedAudioLimit), nameof(AppSettings.SpeechModelPath), nameof(AppSettings.Theme),
+            nameof(AppSettings.SpeechAcceleration), nameof(AppSettings.GpuSpeechModelPath), nameof(AppSettings.GpuSpeechLatency),
             nameof(AppSettings.Accent), nameof(AppSettings.SaveHistory), nameof(AppSettings.Vocabulary),
             nameof(AppSettings.Snippets), nameof(AppSettings.AutoPasteEnabled), nameof(AppSettings.AiPolishEnabled),
             nameof(AppSettings.ProviderPriority), nameof(AppSettings.ChatGptModel), nameof(AppSettings.ClaudeModel),
             nameof(AppSettings.PolishReasoning), nameof(AppSettings.PolishTimeoutSeconds), nameof(AppSettings.BarLeft),
-            nameof(AppSettings.BarTop), nameof(AppSettings.BarHoverActions), nameof(AppSettings.BarContextActions),
+            nameof(AppSettings.BarTop), nameof(AppSettings.BarDockEdge), nameof(AppSettings.BarHoverActions), nameof(AppSettings.BarContextActions),
             nameof(AppSettings.BarOpacity), nameof(AppSettings.BarScale), nameof(AppSettings.BarHoverDelay),
             nameof(AppSettings.AllowButtonRecording), nameof(AppSettings.InputDeviceId),
             nameof(AppSettings.CommandShortcutsEnabled), nameof(AppSettings.MicrophoneShortcut),

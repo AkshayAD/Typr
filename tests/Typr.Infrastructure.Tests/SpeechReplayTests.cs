@@ -18,8 +18,23 @@ public sealed class ModelReplayFactAttribute : FactAttribute
     }
 }
 
+[Collection("Native speech integration")]
 public sealed class SpeechReplayTests(ITestOutputHelper output)
 {
+    [ModelReplayFact]
+    public void UnavailableGpuFallsBackToPreparedCpuWithoutOpeningInput()
+    {
+        using var speech = new SpeechSession(Environment.GetEnvironmentVariable("TYPR_TEST_MODEL")!,
+            gpuDirectory: Path.Combine(Path.GetTempPath(), "typr-missing-gpu-" + Guid.NewGuid().ToString("N")));
+        int inputEvents = 0;
+        speech.CaptureStateChanged += (_, _) => ++inputEvents;
+        speech.Prepare();
+        Assert.StartsWith("CPU", speech.BackendDescription);
+        Assert.Contains("GPU speech could not start", speech.GpuFallbackReason);
+        Assert.Equal(0, inputEvents);
+        Assert.Equal(0, speech.CapturedSampleCount);
+    }
+
     [ModelReplayFact]
     public async Task RealModelRecognizesPacedAudioCancelsFinalizationAndStartsAFreshGeneration()
     {

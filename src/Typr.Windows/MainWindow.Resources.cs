@@ -41,7 +41,7 @@ public partial class MainWindow
         bool paused = SpeechPausedForGaming;
         SpeechResourceStatus.Text = paused
             ? _recording || _busy ? "Gaming · finishing current dictation before pausing" : _loading || _resourceTransitioning ? "Gaming · releasing speech resources" : "Gaming · speech paused, microphone off"
-            : $"Everyday · efficient CPU recognition · {_settings.CpuThreads} threads" + (_settings.SpeechResourceMode == "Automatic" && _gameModeMonitor is { IsSupported: false } ? " · automatic game detection unavailable; use Gaming manually" : "");
+            : "Everyday · " + (_speech?.BackendDescription ?? "speech unloaded") + (_settings.SpeechResourceMode == "Automatic" && _gameModeMonitor is { IsSupported: false } ? " · automatic game detection unavailable; use Gaming manually" : "");
         if (_closing) return;
         if (_desktopIntegration)
         {

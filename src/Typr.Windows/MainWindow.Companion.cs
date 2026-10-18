@@ -55,7 +55,7 @@ public partial class MainWindow
             hover.Click += BarOptions_Click; context.Click += BarOptions_Click;
         }
         _dictationBar.ActionRequested += async action => await CompanionActionAsync(action, fromBar: true);
-        _dictationBar.PositionChanged += point => { if (!_closing) PersistSettings(_settings with { BarLeft = point.X, BarTop = point.Y }); };
+        _dictationBar.PositionChanged += point => { if (!_closing) PersistSettings(_settings with { BarLeft = point.X, BarTop = point.Y, BarDockEdge = _dictationBar.DockEdge.ToString() }); };
         _commandShortcuts.Requested += async action => await CompanionActionAsync(action);
         _targetTimer.Tick += async (_, _) =>
         {
@@ -84,7 +84,7 @@ public partial class MainWindow
         ConfigureCaptionOverlay();
         if (_desktopIntegration) _dictationBar.Configure(_settings.BarVisible && !(SpeechPausedForGaming && !_recording && !_busy), _settings.LiveCaptionsEnabled,
             _settings.BarHoverActions, _settings.BarContextActions, _settings.BarLeft, _settings.BarTop,
-            _settings.BarOpacity, _settings.BarScale, _settings.BarHoverDelay, _settings.AllowButtonRecording);
+            _settings.BarOpacity, _settings.BarScale, _settings.BarHoverDelay, _settings.AllowButtonRecording, _settings.BarDockEdge);
         RefreshCompanionState();
     }
     private void RefreshCompanionState()
@@ -127,7 +127,9 @@ public partial class MainWindow
     private void ResetBarPosition_Click(object sender, RoutedEventArgs e)
     {
         var work = SystemParameters.WorkArea;
-        PersistSettings(_settings with { BarLeft = work.Left + (work.Width - DictationBarWindow.RestingWidth * _settings.BarScale) / 2, BarTop = work.Bottom - DictationBarWindow.RestingHeight * _settings.BarScale - 18 }); ConfigureCompanion();
+        var position = DictationBarWindow.EdgePosition(work, new Size(DictationBarWindow.RestingWidth * _settings.BarScale, DictationBarWindow.RestingHeight * _settings.BarScale),
+            new Point(work.Left + work.Width / 2, work.Bottom), BarDockEdge.Bottom);
+        PersistSettings(_settings with { BarLeft = position.X, BarTop = position.Y, BarDockEdge = "Bottom" }); ConfigureCompanion();
     }
 
     private void BarPresentation_Changed(object sender, RoutedEventArgs e)

@@ -17,9 +17,10 @@ namespace Typr.Windows.Tests;
 [Collection("WPF")]
 public sealed class BarPresentationTests(WpfFixture fixture)
 {
+    private static readonly Rect TestWorkArea = new(0, 0, 1200, 900);
     [Fact] public void BackgroundAlphaChangesWhileForegroundAndWindowStayOpaqueAcrossThemes() => fixture.Run(() => {
         ThemeManager.Apply("Light", "Iris");
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             bar.Configure(false, true, ["PasteLast"], ["HideBar"], 100, 400, opacity: .2);
             bar.UpdateState(true, false, false, "Synthetic live words", "Ready");
@@ -42,7 +43,7 @@ public sealed class BarPresentationTests(WpfFixture fixture)
     [Theory]
     [InlineData(.85)] [InlineData(1)] [InlineData(1.15)]
     public void ScalingKeepsCaptionsOutsideHoverFootprintAndStableCompactAnchor(double scale) => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             bar.Configure(false, true, ["ToggleRecording", "HoldToTalk", "Cancel", "PasteLast", "ToggleMicrophone", "ToggleCaptions", "OpenWorkspace", "HideBar"], [], 100, 500, scale: scale);
             bar.UpdateState(true, false, false, "A synthetic caption", "Ready");
@@ -51,12 +52,12 @@ public sealed class BarPresentationTests(WpfFixture fixture)
             var caption = PopupChild(bar, "_captionPopup");
             Assert.Contains(Descendants<TextBlock>(caption), text => text.Text == "A synthetic caption" && AutomationProperties.GetLiveSetting(text) == AutomationLiveSetting.Polite);
             var anchor = bar.CompactPosition;
-            double bottom = bar.Top + bar.Height;
+            var compactFrame = new Rect(bar.Left, bar.Top, bar.Width, bar.Height);
             bar.SetPointerInside(true);
             Assert.Equal(192 * scale, bar.Width, 5);
             Assert.Equal(32 * scale, bar.Height, 5);
             Assert.Equal(anchor, bar.CompactPosition);
-            Assert.Equal(bottom, bar.Top + bar.Height, 5);
+            Assert.True(new Rect(bar.Left, bar.Top, bar.Width, bar.Height).Contains(compactFrame));
             var size = bar.CompactSize;
             Rect[] work = [new(-1920, -100, 1920, 1000), new(0, 0, 1920, 1040)];
             var clamped = DictationBarWindow.ClampToWorkAreas(new Point(-5000, -500), size, work);
@@ -68,7 +69,7 @@ public sealed class BarPresentationTests(WpfFixture fixture)
     });
 
     [Fact] public void HoverDelayActuallyDefersExpansionAndReentryCancelsCollapse() => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             bar.Configure(false, true, ["PasteLast"], [], 100, 500, hoverDelay: 150);
             bar.SetPointerInside(true); Assert.False(bar.IsExpanded);
@@ -84,7 +85,7 @@ public sealed class BarPresentationTests(WpfFixture fixture)
     [Theory]
     [InlineData(false)] [InlineData(true)]
     public void LeavingContextModeRestoresIndependentHoverActions(bool hide) => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             bar.Configure(false, true, ["PasteLast"], ["HideBar"], 100, 500);
             bar.SetPointerInside(true);
@@ -107,7 +108,7 @@ public sealed class BarPresentationTests(WpfFixture fixture)
     });
 
     [Fact] public void MenuPointerGestureOpensOnFirstReleaseAndClosesOnSecondRelease() => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             var requested = new List<string>(); bar.ActionRequested += requested.Add;
             bar.Configure(false, true, ["PasteLast"], ["HideBar"], 400, 500);
@@ -135,7 +136,7 @@ public sealed class BarPresentationTests(WpfFixture fixture)
     [Theory]
     [InlineData(.85)] [InlineData(1)] [InlineData(1.15)]
     public void RecordingFinishingAndCaptionsPreserveRestingFrameUntilHover(double scale) => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             bar.Configure(false, true, ["PasteLast"], ["HideBar"], 400, 500, scale: scale);
             var frame = new Rect(bar.Left, bar.Top, bar.Width, bar.Height);
@@ -160,7 +161,7 @@ public sealed class BarPresentationTests(WpfFixture fixture)
     });
 
     [Fact] public void HoverActionOverflowPreservesConfiguredOrderAndRightClickActionsOutsideBar() => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             string[] hover = ["ToggleRecording", "HoldToTalk", "Cancel", "PasteLast", "ToggleMicrophone", "ToggleCaptions", "OpenWorkspace", "HideBar"];
             string[] context = ["HideBar", "PasteLast"];
@@ -178,7 +179,7 @@ public sealed class BarPresentationTests(WpfFixture fixture)
     });
 
     [Fact] public void ShortcutOnlyModeDisablesStartsWhileKeepingFinishCancelAndPreparationAvailable() => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             var requested = new List<string>(); bar.ActionRequested += requested.Add;
             bar.Configure(false, true, ["HoldToTalk"], [], 100, 300, allowButtonRecording: false);
@@ -203,7 +204,7 @@ public sealed class BarPresentationTests(WpfFixture fixture)
     [Theory]
     [InlineData(false)] [InlineData(true)]
     public void PendingCaptureCanBeCancelledBeforeOrAfterSpeechPreparationInShortcutOnlyMode(bool prepared) => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             var requested = new List<string>(); bar.ActionRequested += requested.Add;
             bar.Configure(false, true, ["HoldToTalk"], [], 100, 300, allowButtonRecording: false);
@@ -263,19 +264,18 @@ public sealed class BarPresentationTests(WpfFixture fixture)
 
     [Theory]
     [InlineData(.85)] [InlineData(1)] [InlineData(1.15)]
-    public void RestingPillGrowsAroundItsCenterAndBottomWithoutChangingSavedAnchor(double scale) => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+    public void RestingPillGrowsInwardWithoutChangingSavedEdge(double scale) => fixture.Run(() => {
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             var positions = new List<Point>(); bar.PositionChanged += positions.Add;
             bar.Configure(false, true, ["HoldToTalk", "PasteLast", "ToggleMicrophone", "ToggleCaptions"], ["HideBar"], 400, 500, scale: scale);
             Assert.Equal(96 * scale, bar.Width, 5); Assert.Equal(16 * scale, bar.Height, 5);
             var resting = new Rect(bar.Left, bar.Top, bar.Width, bar.Height);
+            var anchor = bar.CompactPosition;
             bar.SetPointerInside(true);
             Assert.Equal(192 * scale, bar.Width, 5); Assert.Equal(32 * scale, bar.Height, 5);
-            Assert.Equal(resting.Left + resting.Width / 2, bar.Left + bar.Width / 2, 5);
-            Assert.Equal(resting.Bottom, bar.Top + bar.Height, 5);
             Assert.True(new Rect(bar.Left, bar.Top, bar.Width, bar.Height).Contains(resting));
-            Assert.Equal(new Point(400, 500), bar.CompactPosition); Assert.Empty(positions);
+            Assert.Equal(anchor, bar.CompactPosition); Assert.Empty(positions);
             Assert.False(bar.IsTransitioning); // Hidden checks never animate or create an HWND.
             bar.SetPointerInside(false); PumpFor(260);
             Assert.Equal(resting, new Rect(bar.Left, bar.Top, bar.Width, bar.Height));
@@ -284,7 +284,7 @@ public sealed class BarPresentationTests(WpfFixture fixture)
     });
 
     [Fact] public void StateAndCaptionChangesCannotMoveOrReplacePressedControls() => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             bar.Configure(false, true, ["PasteLast", "Cancel"], [], 400, 500);
             bar.SetPointerInside(true);
@@ -304,7 +304,7 @@ public sealed class BarPresentationTests(WpfFixture fixture)
     [Theory]
     [InlineData("PasteLast")] [InlineData("HoldToTalk")]
     public void MissedReleaseNeverClicksOrFinishesAHold(string action) => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             var requested = new List<string>(); bar.ActionRequested += requested.Add;
             bar.UpdateState(true, false, false, null, "Ready");
@@ -318,15 +318,16 @@ public sealed class BarPresentationTests(WpfFixture fixture)
     });
 
     [Fact] public void WatchdogDragPersistsOnceAndLostCursorCancelsWithoutDelivery() => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [TestWorkArea]);
         try {
             var requested = new List<string>(); var positions = new List<Point>();
             bar.ActionRequested += requested.Add; bar.PositionChanged += positions.Add;
             bar.Configure(false, true, [], [], 400, 500);
+            var anchor = bar.CompactPosition;
             var dpi = VisualTreeHelper.GetDpi(bar);
             bar.BeginPointer("PasteLast", new Point(500, 500));
             bar.PollPointer(new Point(550, 450), pressed: true);
-            Assert.Equal(new Point(400 + 50 / dpi.DpiScaleX, 500 - 50 / dpi.DpiScaleY), bar.CompactPosition);
+            Assert.Equal(new Point(anchor.X + 50 / dpi.DpiScaleX, anchor.Y - 50 / dpi.DpiScaleY), bar.CompactPosition);
             bar.PollPointer(new Point(570, 430), pressed: false);
             Assert.Single(positions); Assert.Empty(requested); Assert.False(bar.IsGestureActive);
             bar.PollPointer(new Point(570, 430), pressed: false); Assert.Single(positions);
@@ -337,16 +338,16 @@ public sealed class BarPresentationTests(WpfFixture fixture)
         finally { bar.Close(); }
     });
 
-    [Fact] public void DraggingExpandedSurfaceToAnEdgeKeepsWholeFrameVisibleWithoutReleaseJump() => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+    [Fact] public void DraggingExpandedSurfaceToAnEdgeDocksTheWholeFrameInward() => fixture.Run(() => {
+        var bar = new DictationBarWindow(() => [TestWorkArea]);
         try {
             bar.Configure(false, true, ["PasteLast"], [], 400, 500); bar.SetPointerInside(true);
             bar.BeginPointer("PasteLast", new Point(500, 500));
-            bar.MovePointer(new Point(100000, 500));
-            var before = new Rect(bar.Left, bar.Top, bar.Width, bar.Height);
-            bar.EndPointer(new Point(100000, 500));
-            Assert.Equal(before, new Rect(bar.Left, bar.Top, bar.Width, bar.Height));
-            Assert.Equal(bar.Left + bar.Width / 2, bar.CompactPosition.X + bar.CompactSize.Width / 2);
+            bar.MovePointer(new Point(100000, 100));
+            bar.EndPointer(new Point(100000, 100));
+            Assert.Equal(BarDockEdge.Right, bar.DockEdge);
+            Assert.Equal(TestWorkArea.Right - 18, bar.Left + bar.Width);
+            Assert.True(TestWorkArea.Contains(new Rect(bar.Left, bar.Top, bar.Width, bar.Height)));
         }
         finally { bar.Close(); }
     });
@@ -354,7 +355,7 @@ public sealed class BarPresentationTests(WpfFixture fixture)
     [Theory]
     [InlineData(false)] [InlineData(true)]
     public void DraggingDownFromTopKeepsTheChosenGrowthDirectionOnRelease(bool captionAndContext) => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [TestWorkArea]);
         try {
             bar.Configure(false, true, ["PasteLast"], ["OpenWorkspace", "HideBar"], 400, -100000);
             bar.SetPointerInside(true);
@@ -364,9 +365,8 @@ public sealed class BarPresentationTests(WpfFixture fixture)
             }
             Assert.Equal(bar.CompactPosition.Y, bar.Top);
             bar.BeginPointer("PasteLast", new Point(500, 500)); bar.MovePointer(new Point(500, 700));
-            var before = new Rect(bar.Left, bar.Top, bar.Width, bar.Height);
             bar.EndPointer(new Point(500, 700));
-            Assert.Equal(before, new Rect(bar.Left, bar.Top, bar.Width, bar.Height));
+            Assert.Equal(BarDockEdge.Top, bar.DockEdge);
             Assert.Equal(bar.CompactPosition.Y, bar.Top);
         }
         finally { bar.Close(); }
@@ -380,8 +380,8 @@ public sealed class BarPresentationTests(WpfFixture fixture)
 
     [Theory]
     [MemberData(nameof(ClampedDragOrigins))]
-    public void InwardDragFromAnyClampedOriginPreservesFrameOnReleaseAndRestingCenter(int x, int y, int content) => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+    public void InwardDragFromAnyClampedEdgeDocksOnReleaseWithoutActions(int x, int y, int content) => fixture.Run(() => {
+        var bar = new DictationBarWindow(() => [TestWorkArea]);
         try {
             var actions = new List<string>(); var positions = new List<Point>();
             bar.ActionRequested += actions.Add; bar.PositionChanged += positions.Add;
@@ -395,26 +395,30 @@ public sealed class BarPresentationTests(WpfFixture fixture)
             var dpi = VisualTreeHelper.GetDpi(bar);
             var finish = start + new Vector(-x * 120 * dpi.DpiScaleX, -y * 120 * dpi.DpiScaleY);
             bar.BeginPointer("PasteLast", start);
-            Assert.Equal(originalAnchor, bar.CompactPosition); // Presses alone never normalize a saved position.
+            Assert.Equal(originalAnchor, bar.CompactPosition);
             bar.MovePointer(finish);
             var before = new Rect(bar.Left, bar.Top, bar.Width, bar.Height);
             Assert.Equal(initial.Left - x * 120, before.Left, 5);
             Assert.Equal(initial.Top - y * 120, before.Top, 5);
+            var center = bar.CompactPosition + new Vector(bar.CompactSize.Width / 2, bar.CompactSize.Height / 2);
+            var edge = DictationBarWindow.NearestEdge(center, TestWorkArea);
+            var size = edge is BarDockEdge.Left or BarDockEdge.Right ? new Size(16, 96) : new Size(96, 16);
+            var destination = DictationBarWindow.EdgePosition(TestWorkArea, size, center, edge);
             bar.EndPointer(finish);
-            Assert.Equal(before, new Rect(bar.Left, bar.Top, bar.Width, bar.Height));
+            Assert.Equal(destination, bar.CompactPosition);
+            Assert.True(TestWorkArea.Contains(new Rect(bar.Left, bar.Top, bar.Width, bar.Height)));
             Assert.Empty(actions); Assert.Equal(new[] { bar.CompactPosition }, positions);
-            Assert.Equal(before.Left + before.Width / 2, bar.CompactPosition.X + bar.CompactSize.Width / 2, 5);
             bar.UpdateState(true, false, false, null, "Ready");
             bar.SetPointerInside(false); PumpFor(260);
-            Assert.Equal(96, bar.Width); Assert.Equal(16, bar.Height);
-            Assert.Equal(before.Left + before.Width / 2, bar.Left + bar.Width / 2, 5);
+            Assert.Equal(size.Width, bar.Width); Assert.Equal(size.Height, bar.Height);
+            Assert.Equal(destination, new Point(bar.Left, bar.Top));
             Assert.False(bar.IsVisible);
         }
         finally { bar.Close(); }
     });
 
     [Fact] public void StationaryPressAtClampedOriginNeverChangesSavedRestingPosition() => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             var positions = new List<Point>(); bar.PositionChanged += positions.Add;
             bar.Configure(false, true, [], [], -100000, -100000); bar.SetPointerInside(true);
@@ -429,13 +433,10 @@ public sealed class BarPresentationTests(WpfFixture fixture)
     });
 
     [Fact] public void RenderProductResourcePreviewsWithoutShowingAWindow() => fixture.Run(() => {
-        var root = new DirectoryInfo(AppContext.BaseDirectory);
-        while (root != null && !Directory.Exists(Path.Combine(root.FullName, "src", "Typr.Windows"))) root = root.Parent;
-        Assert.NotNull(root);
-        var directory = Path.Combine(root.FullName, "artifacts", "bar-rendered-previews"); Directory.CreateDirectory(directory);
+        var directory = Path.Combine(AppContext.BaseDirectory, "bar-rendered-previews"); Directory.CreateDirectory(directory);
         foreach (string theme in new[] { "Light", "Dark" }) {
             ThemeManager.Apply(theme, "Iris");
-            var bar = new DictationBarWindow();
+            var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
             try {
                 bar.Configure(false, true, ["HoldToTalk", "PasteLast", "ToggleMicrophone", "ToggleCaptions"], ["OpenWorkspace", "ToggleMicrophone", "PasteLast", "ToggleCaptions", "HideBar"], 400, 500, allowButtonRecording: false);
                 Render("idle"); bar.SetPointerInside(true); Render("hover");

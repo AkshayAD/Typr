@@ -1,8 +1,12 @@
 # Typr
 
-A personal voice-to-text workspace for Windows. Speak into a writable field, finish from a shortcut or movable companion bar, and keep your completed text within reach.
+A personal voice-to-text workspace for Windows. Speak into a writable field, finish from a shortcut or companion bar, and keep your completed text within reach.
 
-This is a development preview built with C#/.NET 8, WPF, NAudio and sherpa-onnx. There is no signed installer or public binary release yet. Read the [design plan](docs/PRODUCT_DESIGN_PLAN.md), [companion and writing-quality specification](docs/COMPANION_AND_POLISH_PLAN.md), [model research](docs/ENGLISH_MODEL_RESEARCH.md), and [implementation evidence](docs/IMPLEMENTATION_STATUS.md).
+This is a development preview built with C#/.NET 8, WPF, NAudio and sherpa-onnx. A per-user Windows installer is available from source; it is currently unsigned and has no public binary release. Read the [installation guide](docs/INSTALLATION.md), [design plan](docs/PRODUCT_DESIGN_PLAN.md), [companion and writing-quality specification](docs/COMPANION_AND_POLISH_PLAN.md), [model research](docs/ENGLISH_MODEL_RESEARCH.md), and [implementation evidence](docs/IMPLEMENTATION_STATUS.md).
+
+## Install
+
+Run `Typr-0.1.1-win-x64-Setup.exe` as your normal Windows user. It adds Typr to Start, the desktop and Windows' installed-apps list, without requiring an administrator account or enabling automatic startup. The default location is `%LOCALAPPDATA%\Programs\Typr`. The window title and sidebar show the installed version. Close Typr before upgrading. Uninstall removes the program and its shortcuts while preserving settings, models, provider connections and history. See [building and verifying the installer](docs/INSTALLATION.md).
 
 ## System requirements
 
@@ -10,26 +14,27 @@ This is a development preview built with C#/.NET 8, WPF, NAudio and sherpa-onnx.
 | --- | --- |
 | Operating system | Windows 10 or 11, **64-bit x64**, receiving security updates. Tested on Windows 11. No ARM, macOS or Linux package. |
 | Hardware baseline | **8 GB RAM, four CPU cores, 2 GB free storage** is a practical starting configuration for live English recognition. These hardware figures are provisional recommendations, not a certified minimum. No discrete GPU required. |
+| Optional GPU speech | Compatible NVIDIA GPU/Windows driver for the private CUDA 13 engine; approximately **802 MB download**, **1 GB setup space** on the selected drive, and GPU memory headroom. CPU fallback remains available. No system toolkit required. |
 | Re-transcription | Small adds **375 MB** of model files. Large v3 adds **1.78 GB**; **16 GB RAM and 4 GB additional free space** are recommended for staging and decoding. Retained recordings use additional space. |
 | Audio | Microphone and Windows microphone access. Select a Typr input, or use the system default input. Shared capture opens only during an explicit recording. |
 | Insertion | Writable, non-password field at the same privilege level as Typr. Unsupported/protected/elevated fields may require Copy. |
 | Internet | Required for downloads, provider login, CLI updates and AI polish. Local speech works offline after download with AI polish off. |
 | AI polish | Eligible ChatGPT or Claude subscription and official CLI sign-in. Typr can install/update its private CLI copy. Provider availability and subscription allowances apply; no API key required. |
-| Runtime | Self-contained **Typr.exe includes .NET**. No separate SDK/runtime required to run it. Source builds need a compatible .NET SDK with Windows desktop targeting support. |
+| Runtime | The **installer and portable build include .NET**. No separate SDK/runtime required to run them. Keep the installed program's files together. Source builds need a compatible .NET SDK with Windows desktop targeting support. |
 
 Platform details follow [.NET Windows support](https://learn.microsoft.com/en-us/dotnet/core/install/windows). .NET 8 support ends November 10, 2026; a supported LTS migration is required before public release. Hardware floors and multilingual accuracy still need representative-device evaluation.
 
 ## The experience
 
 - **Dictate and paste:** keyboard hold or hands-free, with target verification, rich clipboard preservation and Copy recovery. Bar/button recording is an explicit opt-in; shortcuts are the default.
-- **Movable companion:** a tiny resting pill grows on hover; drag anywhere, including controls; independently customize hover/right-click actions; show/hide bar and live text; adjust background opacity, size and hover delay while keeping text legible.
+- **Companion bar:** drag anywhere, including controls, then release to glide to the nearest work-area edge at that position. It lies horizontally on the top/bottom and vertically on the left/right; hover doubles its dimensions inward. The default capsule is 96 by 16 DIPs horizontally or 16 by 96 vertically, with an 18 DIP inset and bottom-center reset. Customize hover/right-click actions, live text, background opacity, size and hover delay.
 - **Microphone on demand:** preparing the model leaves audio hardware closed. Finish/release closes capture after a 300 ms ending tail; cancel closes it without that delay. No idle pre-roll, loopback capture, system mute/default-device changes or exclusive input.
 - **Your AI subscription:** default **GPT-6 Luna, low reasoning**; ChatGPT/Claude priority, connection/model refresh, sign-in, CLI updates and effort comparisons in Settings.
 - **Your words:** punctuation, case, digits, bullets and self-corrections while preserving meaning and English/Roman Hindi. Raw bypasses cleanup and AI. AI can still make mistakes; review important text.
 - **Recoverable history:** opt-in local history, original/final search, metadata, retained-audio playback, preview re-polish/re-transcription, apply and restore previous versions.
 - **Personalization:** System/Light/Dark, three accents, vocabulary, literal spoken snippets, captions and independent audio/history retention.
 
-The **live recognizer is English** (Nemotron EN 0.6B int8). Multilingual **Whisper Small** and **Large v3** re-transcribe explicitly retained audio. AI polish can Romanize recognized Hindi; it cannot recover Hindi speech the live recognizer missed. Small is the CPU recommendation. Large v3 is an optional quality experiment, not a measured accuracy guarantee.
+The **live recognizer is English**: Nemotron EN 0.6B int8 on CPU, or the optional native Q8_0 CUDA engine. Automatic acceleration uses a verified GPU setup when available; otherwise it uses the CPU model. Quality (560 ms) is the GPU default. The [local comparison](docs/GPU_LATENCY_EVALUATION.md) measured substantially faster GPU decoding on one synthetic phrase; it is not a broad accuracy or end-to-end latency guarantee. Multilingual **Whisper Small** and **Large v3** re-transcribe explicitly retained audio. AI polish can Romanize recognized Hindi; it cannot recover Hindi speech the live recognizer missed. Small is the CPU recommendation. Large v3 is an optional quality experiment, not a measured accuracy guarantee.
 
 ## First dictation
 

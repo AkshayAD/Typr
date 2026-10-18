@@ -13,7 +13,7 @@ namespace Typr.Windows.Tests;
 public sealed class BarPolishTests(WpfFixture fixture)
 {
     [Fact] public void HoverHintsUseProductSurfaceAndVectorIconsInsteadOfPlatformGlyphs() => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             bar.Configure(false, true, ["PasteLast", "ToggleCaptions"], [], 100, 500);
             bar.SetPointerInside(true);
@@ -31,7 +31,7 @@ public sealed class BarPolishTests(WpfFixture fixture)
     });
 
     [Fact] public void FinishingKeepsHoverControlsAndUsesWaveformWithoutVisibleStatusText() => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             bar.Configure(false, true, ["PasteLast"], [], 100, 500);
             bar.UpdateState(true, false, false, null, "Ready"); bar.SetPointerInside(true);
@@ -69,7 +69,7 @@ public sealed class BarPolishTests(WpfFixture fixture)
     });
 
     [Fact] public void OpeningWaitsForActiveInputWithoutChangingCompactFrameOrFinishAction() => fixture.Run(() => {
-        var bar = new DictationBarWindow();
+        var bar = new DictationBarWindow(() => [new Rect(0, 0, 1000, 600)]);
         try {
             var requested = new List<string>(); bar.ActionRequested += requested.Add;
             bar.Configure(false, true, [], [], 100, 500, allowButtonRecording: false);

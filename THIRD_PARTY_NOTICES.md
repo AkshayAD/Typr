@@ -20,6 +20,12 @@ https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b
 
 The original model is governed by the NVIDIA Open Model License; it must not be described as Apache-licensed merely because the inference engine is Apache-licensed. Review those terms before use or redistribution.
 
+## Optional NVIDIA speech acceleration
+
+The optional downloader fetches the unmodified [NeMo-Speech.cpp 0.2.0 Windows CUDA package](https://github.com/NVIDIA/NeMo-Speech.cpp/releases/tag/v0.2.0) and the official [Nemotron English Q8_0 model](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b). `NeMoSpeechDownload.cs` pins revisions, archive/model hashes and every extracted file. Neither is bundled in the installer or source repository.
+
+The engine is Apache-2.0; the model retains the NVIDIA Open Model License. The private runtime folder includes upstream license texts and third-party notices for its native dependencies, including ggml and Microsoft runtime components, under `licenses/`. Review those notices and model terms before redistribution. Typr calls the documented stable C ABI and installs no system CUDA toolkit or driver.
+
 ## Optional multilingual re-transcription and providers
 
 Whisper model exports are fetched separately from [Small](https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small) and [Large v3](https://huggingface.co/csukuangfj/sherpa-onnx-whisper-large-v3). Pinned revisions, sizes and hashes are in `WhisperRetranscriber.cs`. Upstream [Whisper](https://github.com/openai/whisper) code and weights use the [MIT license](https://github.com/openai/whisper/blob/main/LICENSE); review the export and upstream attribution before redistribution. No weights are bundled here.

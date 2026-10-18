@@ -49,6 +49,9 @@ public partial class MainWindow : Window
         _delivery = new ClipboardDelivery(Path.Combine(localDirectory, "logs"));
         _history = new TranscriptHistoryStore(Path.Combine(localDirectory, "history.json"));
         InitializeComponent();
+        string version = typeof(MainWindow).Assembly.GetName().Version!.ToString(3);
+        AppVersionText.Text = $"TYPR  /  v{version}";
+        Title = $"Typr {version} — your voice, your words";
         try { if (File.Exists(_settingsPath)) _settings = SettingsMigrator.Load(File.ReadAllText(_settingsPath)); }
         catch (Exception)
         {
@@ -64,6 +67,7 @@ public partial class MainWindow : Window
             StatusText.Text = "History couldn't be read. The original file is preserved; new history saves are disabled.";
         }
         ModelPathBox.Text = _settings.SpeechModelPath ?? ModelDownload.DefaultDirectory;
+        InitializeGpuSpeech();
         ThreadCountBox.SelectedIndex = _settings.CpuThreads == 4 ? 1 : 0;
         ThemeBox.SelectedIndex = Array.IndexOf(new[] { "System", "Light", "Dark" }, _settings.Theme);
         AccentBox.SelectedIndex = Array.IndexOf(new[] { "Iris", "Forest", "Ocean" }, _settings.Accent);
@@ -79,7 +83,7 @@ public partial class MainWindow : Window
         InitializeInputChoice();
         RefreshRules(); RefreshHistory();
         _initialized = true;
-        ModelStatus.Text = ModelDownload.IsReady(ModelPathBox.Text)
+        ModelStatus.Text = AnySpeechModelReady(ModelPathBox.Text)
             ? "Speech model found. Your recording shortcut prepares it when needed."
             : "Download the model, then hold Ctrl + Alt in a writable field to talk.";
         RefreshReadiness();
@@ -133,7 +137,7 @@ public partial class MainWindow : Window
         if (_speech != null && (_speechFaulted || ReferenceEquals(sender, ReadinessActionButton))) Navigate("Settings");
         else if (_speech == null)
         {
-            if (ModelDownload.IsReady(ModelPathBox.Text.Trim())) await LoadSpeechAsync(focusPractice: true);
+            if (AnySpeechModelReady(ModelPathBox.Text.Trim())) await LoadSpeechAsync(focusPractice: true);
             else Navigate("Settings");
         }
         else
@@ -288,6 +292,7 @@ public partial class MainWindow : Window
         if (_loading || _speech != null) return;
         _download = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         DownloadButton.Content = "Pause download"; LoadButton.IsEnabled = false; ModelPathBox.IsEnabled = false;
+        RefreshGpuSpeech();
         ModelStatus.Text = "Downloading the verified model. You can pause and resume.";
         var progress = new Progress<double>(value => { if (!_closing) { DownloadProgress.Value = value; ModelStatus.Text = $"Downloading speech model · {value:P0}"; } });
         try
@@ -316,11 +321,13 @@ public partial class MainWindow : Window
         _loading = true; SetSetupEnabled(false); RefreshReadiness();
         var directory = ModelPathBox.Text.Trim(); var threads = ThreadCountBox.SelectedIndex == 1 ? 4 : 2;
         var inputDeviceId = _settings.InputDeviceId;
+        string? gpuDirectory = PreferGpu && NeMoSpeechDownload.IsReady(SelectedGpuDirectory) ? SelectedGpuDirectory : null;
+        bool gpuFast = GpuFast;
         ModelStatus.Text = "Verifying and loading local speech…";
         SpeechSession? loaded = null;
         try
         {
-            loaded = await Task.Run(() => new SpeechSession(directory, threads, _settings.SavedAudioLimit, inputDeviceId), _lifetime.Token);
+            loaded = await Task.Run(() => new SpeechSession(directory, threads, _settings.SavedAudioLimit, inputDeviceId, gpuDirectory, gpuFast), _lifetime.Token);
             if (_closing) { loaded.Dispose(); return; }
             _speech = loaded;
             loaded.CaptureStateChanged += (generation, active) => Dispatcher.BeginInvoke(() =>
@@ -355,7 +362,7 @@ public partial class MainWindow : Window
             loaded.Prepare();
             loaded.SavedAudioLimit = _settings.SavedAudioLimit;
             _speechFaulted = false;
-            ModelStatus.Text = $"Local speech prepared · {threads} CPU threads · microphone off until dictation.";
+            ModelStatus.Text = "Local speech prepared · " + loaded.BackendDescription + (loaded.GpuFallbackReason is { } fallback ? ". " + fallback : ".");
             PersistSettings(_settings with { SpeechModelPath = directory, CpuThreads = threads });
             StatusText.Text = "Speech is prepared. The microphone opens only for a deliberate recording.";
             ShortcutStatus.Text = "Hold Ctrl + Alt in a writable field. Wait for Listening on the first use.";
@@ -373,6 +380,7 @@ public partial class MainWindow : Window
     private void SetSetupEnabled(bool enabled)
     {
         DownloadButton.IsEnabled = LoadButton.IsEnabled = ModelPathBox.IsEnabled = ThreadCountBox.IsEnabled = enabled;
+        RefreshGpuSpeech();
     }
     private void SpeechInputReady(SpeechSession speech, int generation)
     {
@@ -398,7 +406,7 @@ public partial class MainWindow : Window
     {
         bool paused = SpeechPausedForGaming;
         bool ready = _speech != null && !_loading && !_speechFaulted && !paused && !_resourceTransitioning;
-        bool installed = _speech != null || ModelDownload.IsReady(ModelPathBox.Text.Trim());
+        bool installed = _speech != null || AnySpeechModelReady(ModelPathBox.Text.Trim());
         bool starting = _recordingStart != null;
         bool listening = _recording && _readyInputGeneration == _speechGeneration;
         if (_hook != null) _hook.CancellationActive = _recording || _busy || starting;
@@ -416,6 +424,7 @@ public partial class MainWindow : Window
         CaptureState.Text = starting ? "PREPARING TO LISTEN" : _recording ? (listening ? "LISTENING" : "STARTING MICROPHONE") : _inputActive ? "CLOSING MICROPHONE" : _busy ? _processingPhase.ToUpperInvariant() : paused ? "GAMING / SPEECH PAUSED" : _speechFaulted && _speech != null ? "SPEECH NEEDS ATTENTION" : ready ? "SPEECH READY / MICROPHONE OFF" : "MICROPHONE OFF";
         RefreshCompanionState();
         RefreshSpeechResources();
+        RefreshGpuSpeech();
     }
     private async void Practice_Click(object sender, RoutedEventArgs e)
     {

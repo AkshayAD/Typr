@@ -1,6 +1,6 @@
 # Speech resources and GPU acceleration
 
-18 October 2026. The user's priority is fast, accurate dictation during ordinary work and minimal resource competition during gaming. This extends the [recognition research](ENGLISH_MODEL_RESEARCH.md). The bounded measurements below favor efficient CPU execution over CUDA for the current quantized model.
+18 October 2026. The user's priority is fast, accurate dictation during ordinary work and minimal resource competition during gaming. This extends the [recognition research](ENGLISH_MODEL_RESEARCH.md). The earlier measurements below favored CPU for the existing quantized ONNX model. The subsequent [native CUDA evaluation](GPU_LATENCY_EVALUATION.md) found a substantially faster Q8_0 backend, now available as optional verified GPU acceleration with CPU fallback.
 
 ## Separate the delays
 

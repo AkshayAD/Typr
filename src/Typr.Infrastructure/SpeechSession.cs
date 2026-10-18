@@ -8,6 +8,7 @@ namespace Typr.Infrastructure;
 public sealed class SpeechSession : IDisposable
 {
     readonly OnlineRecognizer? recognizer;
+    readonly NeMoSpeechEngine? gpuEngine;
     readonly Func<ISpeechStream> createStream;
     readonly Func<IMicrophoneCapture> createCapture;
     readonly BlockingCollection<Action> work = new(256);
@@ -36,6 +37,8 @@ public sealed class SpeechSession : IDisposable
     int savedAudioLimit;
     string? lastAudioFileName;
     public string? LastAudioFileName => Volatile.Read(ref lastAudioFileName);
+    public string BackendDescription { get; } = "CPU";
+    public string? GpuFallbackReason { get; }
     public int SavedAudioLimit { get => Volatile.Read(ref savedAudioLimit); set => Volatile.Write(ref savedAudioLimit, Math.Clamp(value, 0, 200)); }
     public event Action<string>? Caption;
     public event Action<int, string>? CaptionForRecording;
@@ -45,10 +48,30 @@ public sealed class SpeechSession : IDisposable
     public event Action<int,bool>? CaptureStateChanged;
     /// <summary>First admitted PCM block, tagged to its recording and raised before inference.</summary>
     public event Action<int>? InputReady;
-    public SpeechSession(string modelDirectory, int threads = 2, int savedAudioLimit = 0, string? inputDeviceId = null)
+    public SpeechSession(string modelDirectory, int threads = 2, int savedAudioLimit = 0, string? inputDeviceId = null,
+        string? gpuDirectory = null, bool gpuFast = false)
     {
         SavedAudioLimit = savedAudioLimit;
-        if (!ModelDownload.IsReady(modelDirectory)) throw new FileNotFoundException("Download the speech model first.");
+        if (!string.IsNullOrWhiteSpace(gpuDirectory)) {
+            try {
+                if (!NeMoSpeechDownload.IsReady(gpuDirectory) || !NeMoSpeechDownload.VerifyAsync(gpuDirectory).GetAwaiter().GetResult())
+                    throw new IOException("GPU speech files are missing or failed verification.");
+                gpuEngine = new NeMoSpeechEngine(Path.Combine(gpuDirectory, NeMoSpeechDownload.ModelFileName),
+                    Path.Combine(gpuDirectory, NeMoSpeechDownload.NativeDirectoryName), useGpu: true, rightContext: gpuFast ? 1 : 6);
+                gpuEngine.Warmup();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DllNotFoundException or
+                EntryPointNotFoundException or BadImageFormatException or InvalidOperationException or NotSupportedException or System.ComponentModel.Win32Exception) {
+                gpuEngine?.Dispose(); gpuEngine = null;
+                GpuFallbackReason = "GPU speech could not start. CPU speech is being used; check the GPU files and NVIDIA driver.";
+            }
+        }
+        if (gpuEngine != null) {
+            createStream = gpuEngine.CreateStream;
+            BackendDescription = $"NVIDIA CUDA · {(gpuFast ? "160 ms fast" : "560 ms quality")}";
+        } else {
+        if (!ModelDownload.IsReady(modelDirectory)) throw new FileNotFoundException(GpuFallbackReason == null
+            ? "Download the speech model first." : "GPU speech could not start. Download the CPU speech model for fallback, or check the GPU files and NVIDIA driver.");
         if(!ModelDownload.VerifyAsync(modelDirectory).GetAwaiter().GetResult()) throw new IOException("Speech model integrity check failed. Download it again.");
         var config = new OnlineRecognizerConfig();
         config.FeatConfig.SampleRate = 16000; config.FeatConfig.FeatureDim = 80;
@@ -70,6 +93,8 @@ public sealed class SpeechSession : IDisposable
             catch(UnauthorizedAccessException) { }
         }
         createStream = () => new SherpaSpeechStream(recognizer);
+        BackendDescription = $"CPU · {Math.Clamp(threads, 2, 4)} threads";
+        }
         createCapture = () => new SharedMicrophoneCapture(inputDeviceId);
         worker = StartWorker();
     }
@@ -90,7 +115,7 @@ public sealed class SpeechSession : IDisposable
     public void Prepare()
     {
         ObjectDisposedException.ThrowIf(disposed,this);
-        if(replaySamples != null || recognizer==null) return;
+        if(replaySamples != null || recognizer==null && gpuEngine==null) return;
         var testWave=Environment.GetEnvironmentVariable("TYPR_REPLAY_WAV");
         if(!string.IsNullOrWhiteSpace(testWave)) {
             using var wave=new WaveFileReader(testWave);
@@ -305,7 +330,7 @@ public sealed class SpeechSession : IDisposable
     public void Dispose()
     {
         if(disposed)return; disposed=true; generationGate.Cancel();
-        work.CompleteAdding(); worker.GetAwaiter().GetResult(); Abort(); recognizer?.Dispose(); work.Dispose();
+        work.CompleteAdding(); worker.GetAwaiter().GetResult(); Abort(); recognizer?.Dispose(); gpuEngine?.Dispose(); work.Dispose();
     }
 }
 
