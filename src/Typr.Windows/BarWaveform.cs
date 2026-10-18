@@ -51,9 +51,10 @@ internal sealed class BarWaveform : FrameworkElement
         var brush = TryFindResource(activity == BarActivity.Listening ? "AccentBrush" : activity == BarActivity.Finishing ? "TextBrush" : "MutedBrush") as Brush ?? SystemColors.WindowTextBrush;
         double phase = ShouldAnimate ? Stopwatch.GetElapsedTime(started).TotalSeconds : 0;
         if (activity == BarActivity.Finishing) {
+            double spacing = Math.Min(7, Math.Max(0, (ActualWidth - 5) / 2));
             for (int i = 0; i < 3; i++) {
                 double radius = 1.5 + (ShouldAnimate ? (1 + Math.Sin(phase * 5 - i * .9)) * .45 : 0);
-                drawing.DrawEllipse(brush, null, new Point(ActualWidth / 2 + (i - 1) * 7, ActualHeight / 2), radius, radius);
+                drawing.DrawEllipse(brush, null, new Point(ActualWidth / 2 + (i - 1) * spacing, ActualHeight / 2), radius, radius);
             }
             return;
         }

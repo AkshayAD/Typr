@@ -17,7 +17,7 @@ Reproducible defects and repairs:
 
 The 120-second bound limits queued memory, not the total length of a continuously decoded dictation. There is still no interruption inside an already executing native decode call. These fixes do not establish human accent accuracy or guarantee a particular latency on another computer.
 
-## Shared bar improvements implemented
+## Shared bar improvements implemented before design selection
 
 - Keep the existing 96 by 22 DIP resting footprint, 280 by 44 DIP expanded footprint, saved anchor, user opacity, scale, hover delay, captions and action configuration.
 - Use a 220 ms eased geometry transition and a short delayed control fade. Repeated identical state refreshes no longer stop the growth animation. Glyph hover scales gently over 120 ms.
@@ -36,12 +36,22 @@ Three interactive conversation previews expose Rest, Hover, Listening and Finish
 | Halo | Small microphone orb expanding into a capsule, subtle active halo | More visible recording presence |
 | Underline | Thin resting line expanding into a compact tool strip | Lowest resting visual footprint, with less immediate discoverability |
 
-The shared native polish above is implemented. Final silhouette changes follow the user's visual preference. The previews compiled through the conversation renderer; browser inspection of a local-file preview was blocked and was not bypassed through another origin.
+The previews compiled through the conversation renderer; browser inspection of a local-file preview was blocked and was not bypassed through another origin. The user subsequently selected Silk, with the additional requirements below.
+
+## Selected Silk design
+
+- Silk is the native default for existing and new profiles, with a **96 by 16 DIP** resting capsule and **192 by 32 DIP** hover surface. The existing 85/100/115% sizes scale both footprints together, preserving the maximum two-times width and height.
+- Shortcut start, recognition, polishing and live captions never force expansion. Resting marks respond to input level while listening, then become animated dots while finishing. The bar has no visible processing label; detailed status remains available in the workspace and accessibility help.
+- Hover alone reveals the primary finish/cancel action, up to four configured icons and More. Additional configured hover actions remain reachable under More alongside the chosen right-click actions. Optional live text and the menu are separate nonactivating popups; they never enlarge the capsule.
+- Existing background opacity (20–100%), scale, hover delay, captions, position and shortcut-only recording choices remain saved. The Appearance page names Silk and explains its behavior.
+- Review repaired detached-popup gestures and menu toggle state. Menu controls enter the same click/hold/drag pipeline as bar controls; an actual drag closes the menu without invoking its button. A second menu press/release closes it.
+
+Native checks observed **96 by 16** during listening with separate live text, **96 by 16** during finishing with animated dots, and the same resting geometry after insertion. The complete synthetic sentence, including its ending, appeared once in the original external field with **Pasted and verified**. Hover reached **192 by 32**. Two successive menu clicks opened/closed it, and dragging its Prepare speech control moved the saved anchor without preparing speech. No personal voice was used in these checks.
 
 ## Verification and limits
 
 - Infrastructure Release: **113 passed, zero skipped**, including real-model replay, backlog/drain, sample counts, converter flush and cancellation/restart tests.
-- Windows Release: **114 passed, zero skipped**, including nine recording-state regressions, bar resource/gesture checks, native delivery/focus and nonactivation checks.
+- Latest Windows Release after Silk selection: **119 passed, zero skipped**, including nine recording-state regressions, compact/scaled activity geometry, popup overflow/menu toggle, bar gestures, native delivery/focus and nonactivation checks.
 - Corrected the paced replay harness to follow absolute elapsed time. It now admits all **94,640 frames**; the old relative-delay harness could stop after about 77% of the fixture. Complete final words are now asserted on initial and recovery recordings.
 - One complete synthetic stop observation was **843.6 ms**, including the 300 ms ending tail. It is not a controlled improvement percentage or a human dictation measurement.
 - Native replay-to-external-field check pasted the entire synthetic sentence, including its last word, and reported **Pasted and verified** with AI off. The prior session also verified that sentence and paste-last in Edge.

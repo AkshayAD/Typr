@@ -4,6 +4,8 @@ The user explicitly resumed screen testing after gaming. Tests used isolated tem
 
 ## Latest resumed session
 
+**Silk selection:** the user chose Silk and requested less height, compact recording/finishing and a maximum two-times hover size. The native check observed 96 by 16 DIP listening with separate live text, then 96 by 16 finishing dots, and exactly one complete synthetic sentence in the original external native field. Hover reached 192 by 32 DIPs; menu clicks toggled open/closed, and a drag from its Prepare speech control moved the capsule without invoking preparation. Transparency remains configurable. Details are in [the selected design](DICTATION_RELIABILITY_AND_BAR_REFINEMENT.md#selected-silk-design).
+
 **Subsequent user feedback and repair:** the human physical hold-to-talk check did return a sentence, with poor perceived accuracy/latency and a missing ending if released before the partial display caught up. [Reliability and bar refinement](DICTATION_RELIABILITY_AND_BAR_REFINEMENT.md) records the reproduced defects, fixes and new visual choices. After those changes, **113 Infrastructure and 114 Windows Release checks passed, zero skipped**. A complete-frame synthetic recording again pasted the full sentence into a disposable external native field. New vector controls, custom hover hint and icon dragging were checked on screen. The browser result below predates these audio changes; this later external-field test is separate. A fresh physical natural-voice check remains pending.
 
 The list below records the earlier resumed session, before the user's feedback:

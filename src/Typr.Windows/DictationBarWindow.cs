@@ -16,7 +16,7 @@ namespace Typr.Windows;
 /// <summary>A quiet, non-activating companion to the user's current text field.</summary>
 internal sealed class DictationBarWindow : Window
 {
-    internal const double RestingWidth = 96, RestingHeight = 22, ExpandedWidth = 280, ExpandedHeight = 44;
+    internal const double RestingWidth = 96, RestingHeight = 16, ExpandedWidth = RestingWidth * 2, ExpandedHeight = RestingHeight * 2;
     private static readonly DependencyProperty SurfacePaletteProperty = DependencyProperty.Register("SurfacePalette", typeof(Brush), typeof(DictationBarWindow),
         new PropertyMetadata(Brushes.White, (owner, _) => ((DictationBarWindow)owner).ApplyBackground()));
     private readonly Border _shell;
@@ -24,11 +24,11 @@ internal sealed class DictationBarWindow : Window
     private readonly StackPanel _tray = new();
     private readonly UniformGrid _actions = new() { Rows = 1, HorizontalAlignment = HorizontalAlignment.Right };
     private readonly WrapPanel _contextPanel = new();
+    private readonly WrapPanel _overflowPanel = new();
+    private readonly Popup _captionPopup = new() { AllowsTransparency = true, StaysOpen = true, Focusable = false },
+        _contextPopup = new() { AllowsTransparency = true, StaysOpen = true, Focusable = false };
     private readonly TextBlock _caption = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxHeight = 40, Margin = new Thickness(6, 5, 6, 9) };
     private readonly FrameworkElement _rest;
-    private readonly BarWaveform _processingWave = new() { Width = 26 };
-    private readonly TextBlock _processingText = new() { FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 0, 0) };
-    private readonly StackPanel _processing = new() { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
     private readonly Button _primary;
     private readonly DispatcherTimer _collapse = new() { Interval = TimeSpan.FromMilliseconds(200) }, _expand = new();
     private readonly DispatcherTimer _transition = new() { Interval = TimeSpan.FromMilliseconds(16) };
@@ -65,12 +65,11 @@ internal sealed class DictationBarWindow : Window
         SetResourceReference(ForegroundProperty, "TextBrush");
         Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/Typr;component/BarResources.xaml", UriKind.Relative) });
         AutomationProperties.SetName(this, "Typr floating dictation toolbar");
-        _shell = new Border { CornerRadius = new CornerRadius(22), BorderThickness = new Thickness(1), Padding = new Thickness(4), Margin = new Thickness(2), Child = _layout,
+        _shell = new Border { CornerRadius = new CornerRadius(16), BorderThickness = new Thickness(1), Padding = new Thickness(2), Margin = new Thickness(1), Child = _layout,
             Effect = new DropShadowEffect { BlurRadius = 4, ShadowDepth = 1, Opacity = .12 } };
         _shell.SetResourceReference(Border.BorderBrushProperty, "LineBrush");
         _presentation.Children.Add(_shell); Content = new Viewbox { Child = _presentation, Stretch = Stretch.Fill };
         SetResourceReference(SurfacePaletteProperty, "SurfaceBrush");
-        for (int row = 0; row < 3; row++) _layout.RowDefinitions.Add(new RowDefinition());
         _rest = CreateWave();
         AutomationProperties.SetHelpText(_shell, "Hover for controls. Drag anywhere to move. Right-click for actions.");
         var title = new TextBlock { Text = "Quick actions", FontSize = 11, Margin = new Thickness(7, 4, 7, 5) };
@@ -78,18 +77,20 @@ internal sealed class DictationBarWindow : Window
         _caption.SetResourceReference(TextBlock.ForegroundProperty, "TextBrush");
         AutomationProperties.SetName(_caption, "Live dictation caption");
         AutomationProperties.SetLiveSetting(_caption, AutomationLiveSetting.Polite);
-        _tray.Children.Add(title); _tray.Children.Add(_contextPanel);
-        _layout.Children.Add(_tray); _layout.Children.Add(_caption); _layout.Children.Add(_main); _layout.Children.Add(_rest);
-        _main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(40) });
+        _tray.Children.Add(_overflowPanel); _tray.Children.Add(title); _tray.Children.Add(_contextPanel);
+        _captionPopup.Child = CreatePopupSurface(_caption); _contextPopup.Child = CreatePopupSurface(_tray);
+        foreach (var popup in new[] { _captionPopup, _contextPopup }) { popup.PlacementTarget = _shell; popup.Placement = PlacementMode.Top; popup.VerticalOffset = -6; }
+        _contextPopup.MouseEnter += (_, _) => _collapse.Stop();
+        _contextPopup.MouseLeave += (_, _) => { if (!_pointerInside && !_pointerDown) _collapse.Start(); };
+        _tray.PreviewMouseLeftButtonDown += PointerDown; _tray.PreviewMouseMove += PointerMove; _tray.PreviewMouseLeftButtonUp += PointerUp;
+        _layout.Children.Add(_main); _layout.Children.Add(_rest);
+        _main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
         _main.ColumnDefinitions.Add(new ColumnDefinition());
-        _main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(26) });
+        _main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
         _primary = CreateButton("ToggleMicrophone", true);
         _primary.SetResourceReference(ForegroundProperty, "TextBrush");
         _main.Children.Add(_primary);
         Grid.SetColumn(_actions, 1); _main.Children.Add(_actions);
-        _processing.Children.Add(_processingWave); _processing.Children.Add(_processingText);
-        AutomationProperties.SetLiveSetting(_processingText, AutomationLiveSetting.Polite);
-        Grid.SetColumn(_processing, 1); _main.Children.Add(_processing);
         var menu = CreateButton("ShowMenu", true); Grid.SetColumn(menu, 2); _main.Children.Add(menu);
         SourceInitialized += (_, _) => {
             _source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
@@ -101,7 +102,7 @@ internal sealed class DictationBarWindow : Window
         PreviewMouseRightButtonUp += (_, e) => { if (!_pointerDown) ToggleMenu(); e.Handled = true; };
         LostMouseCapture += (_, _) => { if (_pointerDown) CancelPointer(); };
         MouseEnter += (_, _) => SetPointerInside(true); MouseLeave += (_, _) => SetPointerInside(false);
-        _collapse.Tick += (_, _) => { _collapse.Stop(); if (!_pointerInside && !_pointerDown) { ResetContextActions(); SetExpanded(false); } };
+        _collapse.Tick += (_, _) => { _collapse.Stop(); if (!_pointerInside && !_pointerDown && !_contextPopup.IsMouseOver) { ResetContextActions(); SetExpanded(false); } };
         _expand.Tick += (_, _) => { _expand.Stop(); if (_pointerInside && !_pointerDown) SetExpanded(true); };
         _hintDelay.Tick += (_, _) => {
             _hintDelay.Stop();
@@ -122,7 +123,8 @@ internal sealed class DictationBarWindow : Window
             Point? point = GetCursorPos(out var cursor) ? new Point(cursor.X, cursor.Y) : null;
             PollPointer(point, (NativeMethods.GetAsyncKeyState(_physicalButton) & 0x8000) != 0);
         };
-        Closed += (_, _) => { _closed = true; CloseHint(); _collapse.Stop(); _expand.Stop(); _transition.Stop(); CancelPointer(); _source?.RemoveHook(WindowMessage); };
+        IsVisibleChanged += (_, _) => RefreshPopups();
+        Closed += (_, _) => { _closed = true; _captionPopup.IsOpen = _contextPopup.IsOpen = false; CloseHint(); _collapse.Stop(); _expand.Stop(); _transition.Stop(); CancelPointer(); _source?.RemoveHook(WindowMessage); };
         RebuildActions(); UpdatePrimary(); ApplyLayout();
     }
 
@@ -149,10 +151,6 @@ internal sealed class DictationBarWindow : Window
         bool changed = _micReady != micReady || _recording != recording || _busy != busy;
         _micReady = micReady; _recording = recording; _busy = busy;
         AutomationProperties.SetHelpText(_shell, status); _caption.Text = caption ?? "";
-        _processingText.Text = status.StartsWith("Preparing", StringComparison.Ordinal) ? "Preparing" :
-            status.StartsWith("Recognizing", StringComparison.Ordinal) ? "Recognizing" :
-            status.StartsWith("Polishing", StringComparison.Ordinal) ? "Polishing" :
-            status.StartsWith("Placing", StringComparison.Ordinal) ? "Placing your words" : "Finishing your words";
         if (changed) { UpdatePrimary(); RebuildActions(); }
         RefreshActivity(); ApplyLayout(true);
     }
@@ -167,10 +165,27 @@ internal sealed class DictationBarWindow : Window
         CloseHint(); _collapse.Stop(); _expand.Stop(); _transition.Stop(); CancelPointer();
         _pointerInside = false; ResetContextActions(); _expanded = false; ApplyLayout(); if (IsVisible) Hide();
     }
-    private static FrameworkElement CreateWave() => new BarWaveform { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+    private static FrameworkElement CreateWave() => new BarWaveform { Height = 8, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+    private Border CreatePopupSurface(UIElement content)
+    {
+        var surface = new Border { Child = content, Width = ExpandedWidth, Padding = new Thickness(5), Margin = new Thickness(4), CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1),
+            Effect = new DropShadowEffect { BlurRadius = 5, ShadowDepth = 1, Opacity = .12 } };
+        surface.SetResourceReference(Border.BackgroundProperty, "SurfaceBrush"); surface.SetResourceReference(Border.BorderBrushProperty, "LineBrush");
+        return surface;
+    }
+    private void RefreshPopups()
+    {
+        _contextPopup.IsOpen = !_closed && IsVisible && _contextOpen;
+        _captionPopup.IsOpen = !_closed && IsVisible && !_contextOpen && _captionsEnabled && !string.IsNullOrWhiteSpace(_caption.Text);
+        foreach (var popup in new[] { _captionPopup, _contextPopup }) {
+            popup.Placement = _layoutUpwards ? PlacementMode.Top : PlacementMode.Bottom;
+            popup.VerticalOffset = _layoutUpwards ? -6 : 6;
+            popup.HorizontalOffset = (_shell.ActualWidth - ExpandedWidth - 8) / 2;
+        }
+    }
     private Button CreateButton(string action, bool compact)
     {
-        var button = new Button { Focusable = false, IsTabStop = false, Padding = new Thickness(1), Margin = new Thickness(1), MinHeight = 0, Height = compact ? 28 : 36, Cursor = Cursors.Hand };
+        var button = new Button { Focusable = false, IsTabStop = false, Padding = new Thickness(1), Margin = new Thickness(.5), MinHeight = 0, Height = compact ? 22 : 36, Cursor = Cursors.Hand };
         button.SetResourceReference(StyleProperty, "BarButton");
         if (!compact) button.Width = 84;
         button.MouseEnter += (_, _) => { AnimateGlyph(button, 1.08); QueueHint(button); };
@@ -190,11 +205,11 @@ internal sealed class DictationBarWindow : Window
         var (_, label, tip) = Describe(action);
         button.Tag = action; button.IsEnabled = action == "HoldToTalk" && _holdActive || CanExecute(action);
         button.ToolTip = CreateHint(label, action); AutomationProperties.SetName(button, label); AutomationProperties.SetHelpText(button, tip);
-        if (compact && button == _primary && !_busy && !_recording) button.Content = CreateWave();
-        else if (compact && button == _primary && _recording) {
+        if (compact && button == _primary && !_busy && !_recording) button.Content = new BarWaveform { Width = 24, Height = 12 };
+        else if (compact && button == _primary) {
             var content = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            content.Children.Add(new BarWaveform { Width = 22 });
-            var finish = CreateIcon(action); finish.Width = finish.Height = 9; finish.Margin = new Thickness(3, 0, 0, 0); content.Children.Add(finish); button.Content = content;
+            content.Children.Add(new BarWaveform { Width = 16, Height = 12 });
+            var finish = CreateIcon(action); finish.Width = finish.Height = 7; finish.Margin = new Thickness(2, 0, 0, 0); content.Children.Add(finish); button.Content = content;
         }
         else if (compact) button.Content = CreateIcon(action);
         else button.Content = new TextBlock { Text = label, FontSize = 11, FontFamily = new FontFamily("Segoe UI"),
@@ -249,17 +264,15 @@ internal sealed class DictationBarWindow : Window
         var path = new System.Windows.Shapes.Path { Data = Geometry.Parse(geometry), StrokeThickness = 1.7, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, StrokeLineJoin = PenLineJoin.Round };
         path.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, "TextBrush");
         var canvas = new Canvas { Width = 24, Height = 24 }; canvas.Children.Add(path);
-        return new Viewbox { Width = 17, Height = 17, Child = canvas, Stretch = Stretch.Uniform };
+        return new Viewbox { Width = 16, Height = 16, Child = canvas, Stretch = Stretch.Uniform };
     }
     private IEnumerable<BarWaveform> PrimaryWaves() => _primary.Content is BarWaveform wave ? [wave] : _primary.Content is StackPanel panel ? panel.Children.OfType<BarWaveform>() : [];
     private void RefreshActivity()
     {
         if (_pointerDown) { _primaryDirty = true; return; }
-        if (_rest is BarWaveform rest) rest.SetActivity(BarActivity.Idle);
-        foreach (var wave in PrimaryWaves()) wave.SetActivity(_recording ? BarActivity.Listening : BarActivity.Idle);
-        _processingWave.SetActivity(_busy ? BarActivity.Finishing : BarActivity.Idle);
-        _processing.Visibility = _busy ? Visibility.Visible : Visibility.Collapsed;
-        _actions.Visibility = _busy ? Visibility.Hidden : Visibility.Visible;
+        var activity = _busy ? BarActivity.Finishing : _recording ? BarActivity.Listening : BarActivity.Idle;
+        if (_rest is BarWaveform rest) rest.SetActivity(activity);
+        foreach (var wave in PrimaryWaves()) wave.SetActivity(activity);
     }
     private (string Symbol, string Label, string Tip) Describe(string action) => action switch
     {
@@ -285,10 +298,13 @@ internal sealed class DictationBarWindow : Window
     {
         if (_pointerDown) { _actionsDirty = true; return; }
         CloseHint();
-        _actionsDirty = false; _actions.Children.Clear(); _contextPanel.Children.Clear();
-        foreach (string action in _hoverActions) _actions.Children.Add(CreateButton(action, true));
-        _main.Width = ExpandedWidth - 20; _actions.Width = _main.Width - 66;
-        if (_contextOpen) foreach (string action in _contextActions) _contextPanel.Children.Add(CreateButton(action, false));
+        _actionsDirty = false; _actions.Children.Clear(); _contextPanel.Children.Clear(); _overflowPanel.Children.Clear();
+        foreach (string action in _hoverActions.Take(4)) _actions.Children.Add(CreateButton(action, true));
+        _main.Width = ExpandedWidth - 12; _actions.Width = _main.Width - 54;
+        if (_contextOpen) {
+            foreach (string action in _hoverActions.Skip(4)) _overflowPanel.Children.Add(CreateButton(action, false));
+            foreach (string action in _contextActions) _contextPanel.Children.Add(CreateButton(action, false));
+        }
     }
     private void UpdatePrimary()
     {
@@ -322,26 +338,19 @@ internal sealed class DictationBarWindow : Window
     {
         if (_pointerDown) return; // Freeze controls and growth geometry throughout a gesture.
         EnsurePosition();
-        bool wide = _expanded || _recording || _busy || _captionsEnabled && !string.IsNullOrWhiteSpace(_caption.Text);
-        double trayHeight = _contextOpen && _contextActions.Length > 0 ? 28 + Math.Ceiling(_contextActions.Length / 3d) * 40 : 0;
-        double captionHeight = _captionsEnabled && !string.IsNullOrWhiteSpace(_caption.Text) ? 54 : 0;
+        bool wide = _expanded;
         double width = (wide ? ExpandedWidth : RestingWidth) * _barScale;
-        double height = ((wide ? ExpandedHeight : RestingHeight) + trayHeight + captionHeight) * _barScale;
+        double height = (wide ? ExpandedHeight : RestingHeight) * _barScale;
         var area = NearestWorkArea(_anchor, CompactSize, WorkAreas());
         if (!wide) _dragLayoutPinned = false;
         if (!_dragLayoutPinned) _layoutUpwards = _anchor.Y + CompactSize.Height - height >= area.Top;
         bool upwards = _layoutUpwards;
         var target = new Rect(Math.Clamp(_anchor.X + CompactSize.Width / 2 - width / 2, area.Left, Math.Max(area.Left, area.Right - width)),
             Math.Clamp(upwards ? _anchor.Y + CompactSize.Height - height : _anchor.Y, area.Top, Math.Max(area.Top, area.Bottom - height)), width, height);
-        _layout.RowDefinitions[0].Height = new GridLength(upwards ? trayHeight : wide ? 30 : 8);
-        _layout.RowDefinitions[1].Height = new GridLength(captionHeight);
-        _layout.RowDefinitions[2].Height = new GridLength(upwards ? wide ? 30 : 8 : trayHeight);
-        Grid.SetRow(_main, upwards ? 2 : 0); Grid.SetRow(_rest, upwards ? 2 : 0); Grid.SetRow(_tray, upwards ? 0 : 2); Grid.SetRow(_caption, 1);
         bool reveal = wide && _main.Visibility != Visibility.Visible;
         _main.Visibility = wide ? Visibility.Visible : Visibility.Collapsed; _rest.Visibility = wide ? Visibility.Collapsed : Visibility.Visible;
-        _tray.Visibility = trayHeight > 0 ? Visibility.Visible : Visibility.Collapsed; _caption.Visibility = captionHeight > 0 ? Visibility.Visible : Visibility.Collapsed;
         _presentation.Width = width / _barScale; _presentation.Height = height / _barScale;
-        _shell.CornerRadius = new CornerRadius(wide ? 20 : 9); ApplyBackground();
+        _shell.CornerRadius = new CornerRadius(wide ? 16 : 8); ApplyBackground(); RefreshPopups();
         // Caption/level/status refreshes must not cut an in-flight hover transition short.
         if (_transition.IsEnabled && target == _transitionTo) return;
         _transition.Stop();
@@ -398,6 +407,7 @@ internal sealed class DictationBarWindow : Window
     {
         if (_pointerDown) CancelPointer();
         CloseHint();
+        _captionPopup.IsOpen = false;
         _collapse.Stop(); _expand.Stop(); _transition.Stop(); EnsurePosition();
         _pointerDown = true; _dragging = false; _pressedAction = action;
         _dragLayoutPinned = _main.Visibility == Visibility.Visible;
@@ -414,7 +424,8 @@ internal sealed class DictationBarWindow : Window
             // release and later collapse use the same center and growth edge.
             _dragOrigin = new Point(_gestureBounds.Left + (_gestureBounds.Width - CompactSize.Width) / 2,
                 _layoutUpwards ? _gestureBounds.Bottom - CompactSize.Height : _gestureBounds.Top);
-            _dragging = true; _userPosition = true; if (_holdActive) { _holdActive = false; ActionRequested?.Invoke("Cancel"); }
+            _dragging = true; _userPosition = true; _contextOpen = false; _contextPopup.IsOpen = false;
+            if (_holdActive) { _holdActive = false; ActionRequested?.Invoke("Cancel"); }
         }
         if (_dragging) {
             var position = ClampToWorkAreas(_gestureBounds.TopLeft + delta, _gestureBounds.Size, WorkAreas());
@@ -428,7 +439,9 @@ internal sealed class DictationBarWindow : Window
         bool dragged = _dragging, held = _holdActive; string? action = _pressedAction;
         _gestureWatch.Stop(); _pointerDown = _dragging = _holdActive = false; _pressedAction = null;
         RefreshDeferredControls(); ApplyLayout();
-        if (dragged) PositionChanged?.Invoke(_anchor); else if (held) ActionRequested?.Invoke("HoldFinish"); else if (action != "HoldToTalk" && action != null) ExecuteAction(action);
+        if (dragged) PositionChanged?.Invoke(_anchor);
+        else if (held) { ResetContextActions(); ActionRequested?.Invoke("HoldFinish"); }
+        else if (action != "HoldToTalk" && action != null) ExecuteAction(action);
         if (!_pointerInside) _collapse.Start(); else StartHoverExpansion();
     }
     // A missed release must never synthesize a click, paste, or hold completion.
@@ -451,6 +464,7 @@ internal sealed class DictationBarWindow : Window
         if (!CanExecute(action)) return;
         if (action == "ShowMenu") { ToggleMenu(); return; }
         if (action == "HoldToTalk") return;
+        if (_contextOpen) { ResetContextActions(); SetExpanded(_pointerInside); }
         if (action == "HideBar") HideBar(); ActionRequested?.Invoke(action);
     }
     internal Point CompactPosition => _anchor;

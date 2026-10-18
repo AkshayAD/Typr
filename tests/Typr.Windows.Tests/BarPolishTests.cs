@@ -30,20 +30,27 @@ public sealed class BarPolishTests(WpfFixture fixture)
         } finally { bar.Close(); }
     });
 
-    [Fact] public void FinishingStatusDoesNotRemovePressedActionsUntilGestureEnds() => fixture.Run(() => {
+    [Fact] public void FinishingKeepsHoverControlsAndUsesWaveformWithoutVisibleStatusText() => fixture.Run(() => {
         var bar = new DictationBarWindow();
         try {
             bar.Configure(false, true, ["PasteLast"], [], 100, 500);
             bar.UpdateState(true, false, false, null, "Ready"); bar.SetPointerInside(true);
             var actions = Descendants<UniformGrid>(bar).Single(); var original = actions.Children[0];
+            var frame = new Rect(bar.Left, bar.Top, bar.Width, bar.Height);
             bar.BeginPointer("PasteLast", new Point(100, 100));
             bar.UpdateState(true, false, true, "Already captured words", "Finishing your words");
             Assert.Equal(Visibility.Visible, actions.Visibility); Assert.Same(original, actions.Children[0]);
             bar.EndPointer(new Point(100, 100));
-            Assert.Equal(Visibility.Hidden, actions.Visibility);
-            Assert.Contains(Descendants<TextBlock>(bar), text => text.Text == "Finishing your words" && AutomationProperties.GetLiveSetting(text) == AutomationLiveSetting.Polite);
+            Assert.Equal(Visibility.Visible, actions.Visibility);
+            Assert.False(Assert.IsType<Button>(actions.Children[0]).IsEnabled);
+            Assert.Equal(frame, new Rect(bar.Left, bar.Top, bar.Width, bar.Height));
+            Assert.Contains(Descendants<BarWaveform>(bar), wave => wave.Activity == BarActivity.Finishing);
+            Assert.DoesNotContain(Descendants<TextBlock>(bar), text => !string.IsNullOrWhiteSpace(text.Text));
+            Assert.Contains(Descendants<Button>(bar), button => AutomationProperties.GetName(button) == "Cancel" && button.IsEnabled);
+            Assert.Equal("Finishing your words", AutomationProperties.GetHelpText(Descendants<Border>(bar).First()));
             bar.UpdateState(true, false, false, null, "Ready");
             Assert.Equal(Visibility.Visible, actions.Visibility);
+            Assert.True(Assert.IsType<Button>(actions.Children[0]).IsEnabled);
         } finally { bar.Close(); }
     });
 
@@ -54,9 +61,11 @@ public sealed class BarPolishTests(WpfFixture fixture)
         wave.SetLevel(1); var speaking = Render(wave);
         Assert.False(silent.SequenceEqual(speaking));
         Assert.False(wave.IsAnimating);
-        wave.SetLevel(float.NaN); Render(wave);
-        wave.SetActivity(BarActivity.Finishing); Assert.False(wave.IsAnimating);
-        wave.SetActivity(BarActivity.Idle); Assert.False(wave.IsAnimating);
+        wave.SetLevel(float.NaN); Assert.Equal(silent, Render(wave));
+        wave.SetActivity(BarActivity.Finishing); var finishing = Render(wave);
+        Assert.False(speaking.SequenceEqual(finishing)); Assert.False(wave.IsAnimating);
+        wave.SetActivity(BarActivity.Idle); var idle = Render(wave);
+        Assert.False(finishing.SequenceEqual(idle)); Assert.False(wave.IsAnimating);
     });
 
     static byte[] Render(FrameworkElement element)

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -40,16 +41,20 @@ public sealed class BarPresentationTests(WpfFixture fixture)
 
     [Theory]
     [InlineData(.85)] [InlineData(1)] [InlineData(1.15)]
-    public void ScalingIncludesCaptionTrayAndStableCompactAnchor(double scale) => fixture.Run(() => {
+    public void ScalingKeepsCaptionsOutsideHoverFootprintAndStableCompactAnchor(double scale) => fixture.Run(() => {
         var bar = new DictationBarWindow();
         try {
             bar.Configure(false, true, ["ToggleRecording", "HoldToTalk", "Cancel", "PasteLast", "ToggleMicrophone", "ToggleCaptions", "OpenWorkspace", "HideBar"], [], 100, 500, scale: scale);
             bar.UpdateState(true, false, false, "A synthetic caption", "Ready");
+            Assert.Equal(new Size(96 * scale, 16 * scale), new Size(bar.Width, bar.Height));
+            Assert.DoesNotContain(Descendants<TextBlock>(bar), text => text.Text == "A synthetic caption");
+            var caption = PopupChild(bar, "_captionPopup");
+            Assert.Contains(Descendants<TextBlock>(caption), text => text.Text == "A synthetic caption" && AutomationProperties.GetLiveSetting(text) == AutomationLiveSetting.Polite);
             var anchor = bar.CompactPosition;
             double bottom = bar.Top + bar.Height;
             bar.SetPointerInside(true);
-            Assert.Equal(280 * scale, bar.Width, 5);
-            Assert.Equal((44 + 54) * scale, bar.Height, 5);
+            Assert.Equal(192 * scale, bar.Width, 5);
+            Assert.Equal(32 * scale, bar.Height, 5);
             Assert.Equal(anchor, bar.CompactPosition);
             Assert.Equal(bottom, bar.Top + bar.Height, 5);
             var size = bar.CompactSize;
@@ -82,9 +87,13 @@ public sealed class BarPresentationTests(WpfFixture fixture)
         var bar = new DictationBarWindow();
         try {
             bar.Configure(false, true, ["PasteLast"], ["HideBar"], 100, 500);
+            bar.SetPointerInside(true);
+            var frame = new Rect(bar.Left, bar.Top, bar.Width, bar.Height);
             ButtonNamed(bar, "Bar actions").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Assert.True(bar.IsExpanded);
-            Assert.Contains(Descendants<Button>(bar), button => AutomationProperties.GetName(button) == "Hide bar");
+            Assert.Equal(frame, new Rect(bar.Left, bar.Top, bar.Width, bar.Height));
+            Assert.Contains(Descendants<Button>(PopupChild(bar, "_contextPopup")), button => AutomationProperties.GetName(button) == "Hide bar");
+            Assert.DoesNotContain(Descendants<Button>(bar), button => AutomationProperties.GetName(button) == "Hide bar");
             if (hide) bar.HideBar();
             else { bar.SetPointerInside(false); PumpFor(260); }
             Assert.False(bar.IsExpanded);
@@ -92,6 +101,77 @@ public sealed class BarPresentationTests(WpfFixture fixture)
             Assert.True(bar.IsExpanded);
             Assert.Contains(Descendants<Button>(bar), button => AutomationProperties.GetName(button) == "Paste last");
             Assert.DoesNotContain(Descendants<Button>(bar), button => AutomationProperties.GetName(button) == "Hide bar");
+            Assert.False(bar.IsVisible);
+        }
+        finally { bar.Close(); }
+    });
+
+    [Fact] public void MenuPointerGestureOpensOnFirstReleaseAndClosesOnSecondRelease() => fixture.Run(() => {
+        var bar = new DictationBarWindow();
+        try {
+            var requested = new List<string>(); bar.ActionRequested += requested.Add;
+            bar.Configure(false, true, ["PasteLast"], ["HideBar"], 400, 500);
+            bar.SetPointerInside(true);
+            var frame = new Rect(bar.Left, bar.Top, bar.Width, bar.Height);
+            var point = new Point(500, 500);
+            bar.BeginPointer("ShowMenu", point);
+            Assert.False(ContextOpen());
+            bar.EndPointer(point);
+            Assert.True(ContextOpen());
+            Assert.Contains(Descendants<Button>(PopupChild(bar, "_contextPopup")), button => (string)button.Tag == "HideBar");
+            bar.BeginPointer("ShowMenu", point);
+            Assert.True(ContextOpen());
+            bar.EndPointer(point);
+            Assert.False(ContextOpen());
+            Assert.Empty(Descendants<Button>(PopupChild(bar, "_contextPopup")));
+            Assert.Equal(frame, new Rect(bar.Left, bar.Top, bar.Width, bar.Height));
+            Assert.Empty(requested); Assert.False(bar.IsVisible);
+
+            bool ContextOpen() => Assert.IsType<bool>(typeof(DictationBarWindow).GetField("_contextOpen", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(bar));
+        }
+        finally { bar.Close(); }
+    });
+
+    [Theory]
+    [InlineData(.85)] [InlineData(1)] [InlineData(1.15)]
+    public void RecordingFinishingAndCaptionsPreserveRestingFrameUntilHover(double scale) => fixture.Run(() => {
+        var bar = new DictationBarWindow();
+        try {
+            bar.Configure(false, true, ["PasteLast"], ["HideBar"], 400, 500, scale: scale);
+            var frame = new Rect(bar.Left, bar.Top, bar.Width, bar.Height);
+            var anchor = bar.CompactPosition;
+            foreach (var (recording, busy, status) in new[] {
+                (false, false, "Ready"), (true, false, "Listening"),
+                (false, true, "Recognizing captured audio"), (false, true, "Polishing captured words") }) {
+                bar.UpdateState(true, recording, busy, "A live caption that stays outside the pill", status);
+                Assert.False(bar.IsExpanded);
+                Assert.Equal(frame, new Rect(bar.Left, bar.Top, bar.Width, bar.Height));
+                Assert.Equal(anchor, bar.CompactPosition);
+                Assert.Contains(Descendants<BarWaveform>(bar), wave => wave.Activity == (recording ? BarActivity.Listening : busy ? BarActivity.Finishing : BarActivity.Idle));
+                Assert.DoesNotContain(Descendants<TextBlock>(bar), text => !string.IsNullOrWhiteSpace(text.Text));
+            }
+            bar.SetPointerInside(true);
+            Assert.Equal(192 * scale, bar.Width, 5); Assert.Equal(32 * scale, bar.Height, 5);
+            bar.SetPointerInside(false); PumpFor(260);
+            Assert.Equal(frame, new Rect(bar.Left, bar.Top, bar.Width, bar.Height));
+            Assert.False(bar.IsVisible);
+        }
+        finally { bar.Close(); }
+    });
+
+    [Fact] public void HoverActionOverflowPreservesConfiguredOrderAndRightClickActionsOutsideBar() => fixture.Run(() => {
+        var bar = new DictationBarWindow();
+        try {
+            string[] hover = ["ToggleRecording", "HoldToTalk", "Cancel", "PasteLast", "ToggleMicrophone", "ToggleCaptions", "OpenWorkspace", "HideBar"];
+            string[] context = ["HideBar", "PasteLast"];
+            bar.Configure(false, true, hover, context, 400, 500);
+            bar.SetPointerInside(true);
+            var actions = Assert.Single(Descendants<UniformGrid>(bar));
+            Assert.Equal(hover.Take(4), actions.Children.OfType<Button>().Select(button => (string)button.Tag));
+            ButtonNamed(bar, "Bar actions").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            var popupActions = Descendants<Button>(PopupChild(bar, "_contextPopup")).Select(button => (string)button.Tag).ToArray();
+            Assert.Equal(hover.Skip(4).Concat(context), popupActions);
+            Assert.Equal(new Size(192, 32), new Size(bar.Width, bar.Height));
             Assert.False(bar.IsVisible);
         }
         finally { bar.Close(); }
@@ -188,10 +268,10 @@ public sealed class BarPresentationTests(WpfFixture fixture)
         try {
             var positions = new List<Point>(); bar.PositionChanged += positions.Add;
             bar.Configure(false, true, ["HoldToTalk", "PasteLast", "ToggleMicrophone", "ToggleCaptions"], ["HideBar"], 400, 500, scale: scale);
-            Assert.Equal(96 * scale, bar.Width, 5); Assert.Equal(22 * scale, bar.Height, 5);
+            Assert.Equal(96 * scale, bar.Width, 5); Assert.Equal(16 * scale, bar.Height, 5);
             var resting = new Rect(bar.Left, bar.Top, bar.Width, bar.Height);
             bar.SetPointerInside(true);
-            Assert.Equal(280 * scale, bar.Width, 5); Assert.Equal(44 * scale, bar.Height, 5);
+            Assert.Equal(192 * scale, bar.Width, 5); Assert.Equal(32 * scale, bar.Height, 5);
             Assert.Equal(resting.Left + resting.Width / 2, bar.Left + bar.Width / 2, 5);
             Assert.Equal(resting.Bottom, bar.Top + bar.Height, 5);
             Assert.True(new Rect(bar.Left, bar.Top, bar.Width, bar.Height).Contains(resting));
@@ -216,7 +296,7 @@ public sealed class BarPresentationTests(WpfFixture fixture)
             bar.MovePointer(new Point(500, 100));
             Assert.Equal(before.Size, new Size(bar.Width, bar.Height));
             bar.EndPointer(new Point(500, 100));
-            Assert.NotSame(original, tray.Children[0]); Assert.Equal(98, bar.Height);
+            Assert.NotSame(original, tray.Children[0]); Assert.Equal(32, bar.Height);
         }
         finally { bar.Close(); }
     });
@@ -326,7 +406,7 @@ public sealed class BarPresentationTests(WpfFixture fixture)
             Assert.Equal(before.Left + before.Width / 2, bar.CompactPosition.X + bar.CompactSize.Width / 2, 5);
             bar.UpdateState(true, false, false, null, "Ready");
             bar.SetPointerInside(false); PumpFor(260);
-            Assert.Equal(96, bar.Width); Assert.Equal(22, bar.Height);
+            Assert.Equal(96, bar.Width); Assert.Equal(16, bar.Height);
             Assert.Equal(before.Left + before.Width / 2, bar.Left + bar.Width / 2, 5);
             Assert.False(bar.IsVisible);
         }
@@ -379,6 +459,13 @@ public sealed class BarPresentationTests(WpfFixture fixture)
     });
 
     private static Border Shell(DictationBarWindow bar) => Assert.IsType<Border>(Assert.Single(Assert.IsType<Grid>(Assert.IsType<Viewbox>(bar.Content).Child).Children));
+    private static DependencyObject PopupChild(DictationBarWindow bar, string field)
+    {
+        var popup = Assert.IsType<Popup>(typeof(DictationBarWindow).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(bar));
+        Assert.False(popup.IsOpen); // Hidden checks never create a popup HWND.
+        Assert.False(popup.Focusable);
+        return Assert.IsAssignableFrom<DependencyObject>(popup.Child);
+    }
     private static Button ButtonNamed(DependencyObject root, string name) => Descendants<Button>(root).Single(button => AutomationProperties.GetName(button) == name);
     private static T Control<T>(MainWindow window, string name) where T : class => Assert.IsType<T>(window.FindName(name));
     private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject

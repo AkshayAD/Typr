@@ -89,6 +89,7 @@ public sealed class DictationBarTests(WpfFixture fixture)
             double compactBottom = bar.Top + bar.Height;
             bar.SetPointerInside(true);
             Assert.True(bar.IsExpanded);
+            Assert.Equal(new Size(192, 32), new Size(bar.Width, bar.Height));
             Assert.Equal(anchor, bar.CompactPosition);
             Assert.Equal(compactBottom, bar.Top + bar.Height);
             var labels = Descendants<Button>(bar).Select(AutomationProperties.GetName).ToArray();
@@ -120,6 +121,7 @@ public sealed class DictationBarTests(WpfFixture fixture)
         try {
             bar.Configure(false, true, ["PasteLast", "Cancel"], ["HideBar"], 100, 200);
             bar.UpdateState(true, false, false, null, "Ready");
+            var compactFrame = new Rect(bar.Left, bar.Top, bar.Width, bar.Height);
             var tray = Assert.Single(Descendants<System.Windows.Controls.Primitives.UniformGrid>(bar));
             var original = tray.Children[0];
             bar.UpdateState(true, false, false, "A partial caption", "Ready");
@@ -130,6 +132,8 @@ public sealed class DictationBarTests(WpfFixture fixture)
             bar.EndPointer(new Point(100, 100));
             Assert.NotSame(original, tray.Children[0]);
             Assert.False(Assert.IsType<Button>(tray.Children[0]).IsEnabled);
+            Assert.Equal(compactFrame, new Rect(bar.Left, bar.Top, bar.Width, bar.Height));
+            Assert.False(bar.IsExpanded);
         }
         finally { bar.Close(); }
     });
