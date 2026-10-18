@@ -21,7 +21,7 @@ public partial class MainWindow
         _gpuPreferencesInitializing = true;
         SpeechAccelerationBox.SelectedIndex = PreferGpu ? 0 : 1;
         GpuSpeechLatencyBox.SelectedIndex = GpuFast ? 1 : 0;
-        GpuModelPathBox.Text = _settings.GpuSpeechModelPath ?? NeMoSpeechDownload.DefaultDirectory;
+        GpuModelPathBox.Text = _modelLocations.ResolveGpu(_settings.GpuSpeechModelPath);
         _gpuPathEdited = false;
         _gpuPreferencesInitializing = false;
         RefreshGpuSpeech();
@@ -97,7 +97,7 @@ public partial class MainWindow
             if (!_closing && _gpuDownloading) { GpuDownloadProgress.Value = value; GpuBackendStatus.Text = $"Downloading GPU model · {value:P0}"; }
         });
         try {
-            await NeMoSpeechDownload.DownloadAsync(directory, progress, download.Token);
+            await NeMoSpeechDownload.DownloadAsync(directory, progress, download.Token, _modelLocations);
             if (!_closing) {
                 PersistSettings(_settings with { GpuSpeechModelPath = directory });
                 GpuBackendStatus.Text = "GPU download verified. Prepare speech to use Automatic acceleration.";

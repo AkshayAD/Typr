@@ -9,6 +9,82 @@ public sealed class OverlappingRecordingTests
 {
     static readonly TimeSpan Timeout=TimeSpan.FromSeconds(5);
 
+    [Fact]
+    public async Task RestartDuringReleaseTailDrainsPriorInputBeforeAdmittingTheNextUtterance()
+    {
+        using var releaseDriver=new ManualResetEventSlim();
+        using var releaseDecode=new ManualResetEventSlim();
+        var closing=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var decoding=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first=new Input(); var next=new Input();
+        first.OnStop=() => {
+            closing.TrySetResult();
+            if(!releaseDriver.Wait(Timeout)) throw new TimeoutException();
+            first.Emit([.3f]);
+        };
+        first.OnDispose=() => first.Emit([.4f]);
+        var firstStream=new Stream("first") { BlockFinal=() => {
+            decoding.TrySetResult();
+            if(!releaseDecode.Wait(Timeout)) throw new TimeoutException();
+        } };
+        var nextStream=new Stream("next");
+        int inputs=0,streams=0;
+        using var session=new SpeechSession(() => Interlocked.Increment(ref streams)==1 ? firstStream : nextStream,
+            () => Interlocked.Increment(ref inputs)==1 ? first : next);
+        session.StartRecording(); await first.Started.Task.WaitAsync(Timeout);
+        first.Emit([.2f]);
+        var firstResult=session.FinishRecordingAsync();
+        session.StartRecording();
+        try {
+            await closing.Task.WaitAsync(Timeout);
+            Assert.False(next.Started.Task.IsCompleted);
+            releaseDriver.Set();
+            await next.Started.Task.WaitAsync(Timeout);
+            Assert.False(first.IsOpen);
+            // Two shared WASAPI streams would hear the same next utterance.
+            // Deliver physical sound to every still-open synthetic input.
+            foreach(var input in new[] {first,next}) if(input.IsOpen) input.Emit([.8f]);
+            await decoding.Task.WaitAsync(Timeout);
+            var nextResult=session.FinishRecordingAsync();
+            await next.Closed.Task.WaitAsync(Timeout);
+            Assert.False(firstResult.IsCompleted);
+            releaseDecode.Set();
+            Assert.Equal("first",(await firstResult.WaitAsync(Timeout)).Text);
+            Assert.Equal("next",(await nextResult.WaitAsync(Timeout)).Text);
+            Assert.Equal(new[] {.2f,.3f,.4f},firstStream.Samples.Where(sample=>sample!=0));
+            Assert.Equal(new[] {.8f},nextStream.Samples.Where(sample=>sample!=0));
+        }
+        finally { releaseDriver.Set(); releaseDecode.Set(); }
+    }
+
+    [Fact]
+    public async Task CancellingAStartWaitingForPriorDriverClosureNeverOpensItsInputLater()
+    {
+        using var releaseDriver=new ManualResetEventSlim();
+        var closing=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first=new Input(); var next=new Input();
+        first.OnStop=() => {
+            closing.TrySetResult();
+            if(!releaseDriver.Wait(Timeout)) throw new TimeoutException();
+        };
+        int inputs=0;
+        using var session=new SpeechSession(() => new Stream("first"),
+            () => Interlocked.Increment(ref inputs)==1 ? first : next);
+        session.StartRecording(); await first.Started.Task.WaitAsync(Timeout);
+        var firstResult=session.FinishRecordingAsync();
+        int pending=session.StartRecording();
+        try {
+            await closing.Task.WaitAsync(Timeout);
+            session.CancelRecording(pending);
+            releaseDriver.Set();
+            await firstResult.WaitAsync(Timeout);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.FinishRecordingAsync());
+            Assert.Equal(1,inputs);
+            Assert.False(next.Started.Task.IsCompleted);
+        }
+        finally { releaseDriver.Set(); }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -141,9 +217,10 @@ public sealed class OverlappingRecordingTests
         public Action? OnStop { get; set; }
         public Action? OnDispose { get; set; }
         public int Disposes;
-        public void Start() => Started.TrySetResult();
+        public volatile bool IsOpen;
+        public void Start() { IsOpen=true; Started.TrySetResult(); }
         public void Stop() => OnStop?.Invoke();
-        public void Dispose() { OnDispose?.Invoke(); ++Disposes; Closed.TrySetResult(); }
+        public void Dispose() { OnDispose?.Invoke(); IsOpen=false; ++Disposes; Closed.TrySetResult(); }
         public void Emit(float[] samples) => Samples?.Invoke(samples);
     }
 

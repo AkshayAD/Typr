@@ -40,13 +40,14 @@ public sealed class SpeechSession : IDisposable
     /// <summary>First admitted PCM block, tagged to its recording and raised before inference.</summary>
     public event Action<int>? InputReady;
     public SpeechSession(string modelDirectory, int threads = 2, int savedAudioLimit = 0, string? inputDeviceId = null,
-        string? gpuDirectory = null, bool gpuFast = false)
+        string? gpuDirectory = null, bool gpuFast = false, ModelLocations? locations = null)
     {
         SavedAudioLimit = savedAudioLimit;
         if (!string.IsNullOrWhiteSpace(gpuDirectory)) {
             try {
                 if (!NeMoSpeechDownload.IsReady(gpuDirectory) || !NeMoSpeechDownload.VerifyAsync(gpuDirectory).GetAwaiter().GetResult())
                     throw new IOException("GPU speech files are missing or failed verification.");
+                (locations ?? new ModelLocations()).RememberVerifiedGpu(gpuDirectory);
                 gpuEngine = new NeMoSpeechEngine(Path.Combine(gpuDirectory, NeMoSpeechDownload.ModelFileName),
                     Path.Combine(gpuDirectory, NeMoSpeechDownload.NativeDirectoryName), useGpu: true, rightContext: gpuFast ? 1 : 6);
                 gpuEngine.Warmup();
@@ -64,6 +65,7 @@ public sealed class SpeechSession : IDisposable
         if (!ModelDownload.IsReady(modelDirectory)) throw new FileNotFoundException(GpuFallbackReason == null
             ? "Download the speech model first." : "GPU speech could not start. Download the CPU speech model for fallback, or check the GPU files and NVIDIA driver.");
         if(!ModelDownload.VerifyAsync(modelDirectory).GetAwaiter().GetResult()) throw new IOException("Speech model integrity check failed. Download it again.");
+        (locations ?? new ModelLocations()).RememberVerifiedCpu(modelDirectory);
         var config = new OnlineRecognizerConfig();
         config.FeatConfig.SampleRate = 16000; config.FeatConfig.FeatureDim = 80;
         config.ModelConfig.Transducer.Encoder = Path.Combine(modelDirectory,"encoder.int8.onnx");
@@ -120,15 +122,29 @@ public sealed class SpeechSession : IDisposable
             if(current is { StopRequested: false, Cancelled: false, InputClosed: false })
                 throw new InvalidOperationException("A recording is already capturing audio.");
             if(recordings.Count>=256) throw new InvalidOperationException("Too many recordings are waiting for speech processing.");
+            var previous=current;
             var context=new RecordingContext(++nextGeneration,SavedAudioLimit);
             recordings.Add(context.Generation,context);
             Volatile.Write(ref current,context);
+            // A deliberate restart ends the previous release tail. Drain its
+            // driver packets before opening the same microphone again, so the
+            // next utterance cannot be admitted by both recording contexts.
+            previous?.CloseRequested.TrySetResult();
             // The producer has its own lifetime. It can admit PCM while the model
             // worker is still finishing an earlier recording on the shared engine.
-            context.CaptureTask=Task.Run(() => CaptureAsync(context));
+            context.CaptureTask=Task.Run(() => CaptureAfterPreviousAsync(context,previous));
             work.Add(context);
             return context.Generation;
         }
+    }
+
+    async Task CaptureAfterPreviousAsync(RecordingContext context,RecordingContext? previous)
+    {
+        if(previous!=null) {
+            try { await previous.CaptureTask.ConfigureAwait(false); }
+            catch { /* The previous result reports its own producer cleanup failure. */ }
+        }
+        await CaptureAsync(context).ConfigureAwait(false);
     }
 
     public async Task<string> StopRecordingAsync(CancellationToken cancellationToken=default) =>

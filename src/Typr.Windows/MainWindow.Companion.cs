@@ -64,11 +64,21 @@ public partial class MainWindow
         };
         _companionInitializing = false; _companionInitialized = true;
         ConfigureCompanion(); RefreshHistorySummary();
+        bool startupSpeechChecked = false;
         if (desktopIntegration) Loaded += async (_, _) =>
         {
             ShortcutConfigurationStatus.Text = _commandShortcuts.Configure(this, EffectiveShortcutSettings);
             ConfigureDictationHook();
             if (!SpeechPausedForGaming) _targetTimer.Start(); ConfigureCompanion();
+            if (!startupSpeechChecked)
+            {
+                startupSpeechChecked = true;
+                if (AnySpeechModelReady(ModelPathBox.Text.Trim()))
+                {
+                    if (SpeechPausedForGaming) _resumeSpeechAfterGaming = true;
+                    else await LoadSpeechAsync(focusPractice: false);
+                }
+            }
             if (!SpeechPausedForGaming) await RefreshProvidersAsync();
         };
     }

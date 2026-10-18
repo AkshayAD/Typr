@@ -22,6 +22,7 @@ public partial class MainWindow : Window
     private readonly Stopwatch _captureTime = new();
     private readonly TranscriptHistoryStore _history;
     private readonly string _settingsPath, _localDirectory;
+    private readonly ModelLocations _modelLocations;
     private CancellationTokenSource? _operation, _download;
     private Task<DeliveryTarget>? _target;
     private Task<DeliveryResult>? _pendingDelivery;
@@ -42,10 +43,11 @@ public partial class MainWindow : Window
         ProfileMigration.MigrateDirectory(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)));
 
     // Explicit directories keep presentation integration checks away from personal data.
-    internal MainWindow(string settingsDirectory, string localDirectory, bool desktopIntegration = false)
+    internal MainWindow(string settingsDirectory, string localDirectory, bool desktopIntegration = false, string? modelCatalogPath = null)
     {
         _settingsPath = Path.Combine(settingsDirectory, "settings.json");
         _localDirectory = localDirectory;
+        _modelLocations = new ModelLocations(modelCatalogPath ?? (desktopIntegration ? ModelLocations.DefaultCatalogPath : Path.Combine(localDirectory, "model-locations.json")));
         _delivery = new ClipboardDelivery(Path.Combine(localDirectory, "logs"));
         _history = new TranscriptHistoryStore(Path.Combine(localDirectory, "history.json"));
         InitializeComponent();
@@ -66,7 +68,7 @@ public partial class MainWindow : Window
             _historyWritable = false;
             StatusText.Text = "History couldn't be read. The original file is preserved; new history saves are disabled.";
         }
-        ModelPathBox.Text = _settings.SpeechModelPath ?? ModelDownload.DefaultDirectory;
+        ModelPathBox.Text = _modelLocations.ResolveCpu(_settings.SpeechModelPath);
         InitializeGpuSpeech();
         ThreadCountBox.SelectedIndex = _settings.CpuThreads == 4 ? 1 : 0;
         ThemeBox.SelectedIndex = Array.IndexOf(new[] { "System", "Light", "Dark" }, _settings.Theme);
@@ -84,7 +86,7 @@ public partial class MainWindow : Window
         RefreshRules(); RefreshHistory();
         _initialized = true;
         ModelStatus.Text = AnySpeechModelReady(ModelPathBox.Text)
-            ? "Speech model found. Your recording shortcut prepares it when needed."
+            ? "Speech model found. Typr prepares it without opening the microphone."
             : "Download the model, then hold Ctrl + Alt in a writable field to talk.";
         RefreshReadiness();
         _clock.Tick += (_, _) => CaptureDuration.Text = $"Listening · {_captureTime.Elapsed:mm\\:ss}";
@@ -298,7 +300,7 @@ public partial class MainWindow : Window
         var progress = new Progress<double>(value => { if (!_closing) { DownloadProgress.Value = value; ModelStatus.Text = $"Downloading speech model · {value:P0}"; } });
         try
         {
-            await ModelDownload.DownloadAsync(ModelPathBox.Text.Trim(), progress, _download.Token);
+            await ModelDownload.DownloadAsync(ModelPathBox.Text.Trim(), progress, _download.Token, _modelLocations);
             if (!_closing) { ModelStatus.Text = "Download verified. Hold Ctrl + Alt to prepare speech and talk."; PersistSettings(_settings with { SpeechModelPath = ModelPathBox.Text.Trim() }); }
         }
         catch (OperationCanceledException) { if (!_closing) ModelStatus.Text = "Download paused. Choose Download speech model to resume."; }
@@ -328,7 +330,7 @@ public partial class MainWindow : Window
         SpeechSession? loaded = null;
         try
         {
-            loaded = await Task.Run(() => new SpeechSession(directory, threads, _settings.SavedAudioLimit, inputDeviceId, gpuDirectory, gpuFast), _lifetime.Token);
+            loaded = await Task.Run(() => new SpeechSession(directory, threads, _settings.SavedAudioLimit, inputDeviceId, gpuDirectory, gpuFast, _modelLocations), _lifetime.Token);
             if (_closing) { loaded.Dispose(); return; }
             _speech = loaded;
             ObserveSpeechSession(loaded);

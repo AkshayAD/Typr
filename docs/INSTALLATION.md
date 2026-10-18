@@ -2,9 +2,9 @@
 
 Typr's installer supports Windows 10 and 11 on an x64 PC. The application includes its .NET runtime. Speech models and optional provider CLIs are downloaded separately from inside Typr.
 
-Run `Typr-0.1.2-win-x64-Setup.exe` as your normal Windows user. Setup installs into `%LOCALAPPDATA%\Programs\Typr`, adds Typr to Start and Windows Settings > Apps > Installed apps, and creates a desktop shortcut by default. Clear **Create a desktop shortcut** if you do not want it. No administrator permission is requested, and Typr is not added to Windows startup. The final **Launch Typr** option is off by default.
+Run `Typr-0.1.4-win-x64-Setup.exe` as your normal Windows user. Setup installs into `%LOCALAPPDATA%\Programs\Typr`, adds Typr to Start and Windows Settings > Apps > Installed apps, and creates a desktop shortcut by default. Clear **Create a desktop shortcut** if you do not want it. No administrator permission is requested, and Typr is not added to Windows startup. The final **Launch Typr** option is off by default.
 
-This package is **version 0.1.2**, with executable file version `0.1.2.0`. Check Typr's visible version number to confirm which installed build you opened. Installing it over the earlier 0.1.0 pilot keeps the same upgrade identity and profile locations.
+This package is **version 0.1.4**, with executable file version `0.1.4.0`. Check Typr's visible version number to confirm which installed build you opened. Installing it over the earlier 0.1.0 pilot keeps the same upgrade identity and profile locations.
 
 For every user-facing update, increment `Version`, `AssemblyVersion` and `FileVersion` in `src/Typr.Windows/Typr.Windows.csproj` together. The window title/sidebar read the assembly version; the installer reads the project version. Keep the Inno fallback values synchronized and record the changes in [the changelog](CHANGELOG.md).
 
@@ -20,6 +20,8 @@ Remove Typr through Windows Settings > Apps > Installed apps > Typr > Uninstall.
 - `%LOCALAPPDATA%\Typr`: models, provider tools, history, retained audio and diagnostics.
 
 Those folders can contain personal data. Removing Typr does not erase that data. Back them up before any separate manual cleanup. The installer does not bundle or replace a settings file, provider credentials, models or history.
+
+CPU and GPU model folders can share a central parent directory on any writable drive. `%LOCALAPPDATA%\Typr\model-locations.json` records their verified locations independently of settings. Startup first uses a ready selected folder, then the recorded shared folder, then the existing default location. This avoids another download when settings point to an old build; it does not duplicate models or scan your drives. Preparation still verifies their pinned hashes. An unreadable catalog is preserved. Opening Typr prepares an existing model once without opening the microphone; explicit Unload remains effective until another prepare/recording or app restart, and gaming pauses preparation.
 
 ## Runtime dependencies
 
@@ -64,3 +66,5 @@ On a disposable standard-user Windows x64 profile or VM:
 5. Repeat with the desktop task cleared and a custom destination. Verify the task choice and destination survive an upgrade.
 
 Build success does not establish those desktop, upgrade, data-preservation or clean-machine runtime behaviors. Record the checks actually performed separately from this checklist.
+
+When a packaged development host launches setup or creates shortcuts, Windows can redirect newly created AppData files and HKCU registration into that host's private storage. A shortcut's apparent path and an installer exit code alone do not prove a normal Start launch works. Use a normal unpackaged installer launch, verify the real Start entry, and open Typr from it with its normal profile. See [Microsoft's description of AppData and registry redirection](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-behind-the-scenes).

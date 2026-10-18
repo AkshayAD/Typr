@@ -83,7 +83,7 @@ public static class NeMoSpeechDownload
         catch (ArgumentException) { return false; }
     }
 
-    public static async Task DownloadAsync(string directory, IProgress<double>? progress = null, CancellationToken cancellationToken = default)
+    public static async Task DownloadAsync(string directory, IProgress<double>? progress = null, CancellationToken cancellationToken = default, ModelLocations? locations = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         await Operation.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -94,7 +94,10 @@ public static class NeMoSpeechDownload
             Directory.CreateDirectory(root);
             // Also serialize independent processes sharing a custom model directory.
             await using var downloadLock = new FileStream(SafePath(root, ".download.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-            if (await VerifyAsync(root, cancellationToken).ConfigureAwait(false)) { progress?.Report(1); return; }
+            if (await VerifyAsync(root, cancellationToken).ConfigureAwait(false)) {
+                (locations ?? new ModelLocations()).RememberVerifiedGpu(root);
+                progress?.Report(1); return;
+            }
             string model = SafePath(root, ModelFileName);
             string archive = SafePath(root, ArchiveRoot + ".zip");
             long needed = await RemainingDownloadAsync(model, ModelSize, ModelHash, cancellationToken).ConfigureAwait(false);
@@ -121,6 +124,7 @@ public static class NeMoSpeechDownload
             await DownloadFileAsync(client, new Uri(ModelUrl), model, ModelSize, ModelHash,
                 bytes => progress?.Report((double)(ArchiveSize + bytes) / DownloadBytes), cancellationToken).ConfigureAwait(false);
             if (!await VerifyAsync(root, cancellationToken).ConfigureAwait(false)) throw new IOException("GPU speech files failed verification. Retry setup to repair the affected files.");
+            (locations ?? new ModelLocations()).RememberVerifiedGpu(root);
             progress?.Report(1);
         }
         finally { Operation.Release(); }

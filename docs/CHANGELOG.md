@@ -1,5 +1,16 @@
 # Typr versions
 
+## 0.1.4 — 18 October 2026
+
+- Reuse verified CPU/GPU model folders through a separate per-user location catalog, including when settings are missing, unreadable or point to an older installation. Model preparation still verifies pinned hashes; unreadable user files remain intact.
+- Prepare existing speech models once when Typr opens, without opening the microphone. Gaming defers preparation; explicit Unload remains effective for the session.
+- Prevent rapid consecutive dictations from sharing their audio. Starting the next recording ends the previous release tail and waits only for its microphone's stop/drain/disposal, while recognition and output can continue independently. An ordinary release still retains its 300 ms tail.
+- Keep the visible application, installer and executable versions synchronized at 0.1.4 / 0.1.4.0.
+
+Verification: 42 focused microphone/queue Infrastructure checks, 34 affected hidden Windows checks and five real CPU/CUDA recognition checks passed, with zero skips. Real-model checks retained the full synthetic sentence when released before any partial appeared, including GPU audio delivered only during driver stop. These are distinct from a physical spoken-voice/browser test. Model-catalog work separately passed 160 Infrastructure checks (six opt-in native checks excluded) and 197 hidden Windows checks before the rapid-restart repair.
+
+Version 0.1.3 was installed during this repair to verify model-catalog packaging and preservation of all 110 profile files; 0.1.4 adds the final microphone handoff and startup preparation changes.
+
 ## 0.1.2 — 18 October 2026
 
 - Start the next dictation while earlier speech is recognizing, polishing or waiting to paste. Each recording owns its audio, settings, destination, duration and cancellation; one model worker processes streams in order without delaying the next microphone.

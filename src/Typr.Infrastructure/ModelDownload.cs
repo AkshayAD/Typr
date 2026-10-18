@@ -12,13 +12,17 @@ public static class ModelDownload
         ("decoder.int8.onnx",7257753,"0be9702c2f427a2b6bb241d298e0d3836a558de1f5b9fd3018f1cce6e2b3fa98"),
         ("joiner.int8.onnx",1735862,"a35eac38a22ebceb04d230ed7afe0d68f446ba6914a036b97f14fece95967e23"),
         ("tokens.txt",8952,"dc0b4584ab2e4ddbf888425c076c61b736e7356a015250db7d307e6f1a8188ff")];
-    public static bool IsReady(string directory) => Files.All(f=>File.Exists(Path.Combine(directory,f.Name)) && new FileInfo(Path.Combine(directory,f.Name)).Length==f.Size);
+    public static bool IsReady(string directory)
+    {
+        try { return Files.All(f=>File.Exists(Path.Combine(directory,f.Name)) && new FileInfo(Path.Combine(directory,f.Name)).Length==f.Size); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return false; }
+    }
     public static async Task<bool> VerifyAsync(string directory,CancellationToken cancellationToken=default)
     {
         foreach(var file in Files) if(!await Valid(Path.Combine(directory,file.Name),file.Size,file.Hash,cancellationToken)) return false;
         return true;
     }
-    public static async Task DownloadAsync(string directory,IProgress<double>? progress=null,CancellationToken cancellationToken=default)
+    public static async Task DownloadAsync(string directory,IProgress<double>? progress=null,CancellationToken cancellationToken=default,ModelLocations? locations=null)
     {
         Directory.CreateDirectory(directory);
         using var client=new HttpClient { Timeout=Timeout.InfiniteTimeSpan };
@@ -46,6 +50,7 @@ public static class ModelDownload
             if(!await Valid(part,file.Size,file.Hash,cancellationToken)) { if(File.Exists(part)) File.Delete(part); throw new IOException($"Integrity check failed for {file.Name}; retry download."); }
             File.Move(part,final,true); done+=file.Size; progress?.Report((double)done/total);
         }
+        (locations ?? new ModelLocations()).RememberVerifiedCpu(directory);
     }
     static async Task<bool> Valid(string path,long size,string hash,CancellationToken ct)
     {
