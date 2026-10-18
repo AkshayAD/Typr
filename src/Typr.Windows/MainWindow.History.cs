@@ -97,6 +97,7 @@ public partial class MainWindow
     }
     private async Task RunHistoryOperationAsync(Func<CancellationToken, Task> action)
     {
+        if (SpeechPausedForGaming) { HistoryOperationStatus.Text = "Speech processing is paused for gaming. Choose Everyday to resume."; return; }
         if (_historyOperation != null || _closing || _busy || _recording) return;
         using var operation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         _historyOperation = operation;
@@ -104,7 +105,7 @@ public partial class MainWindow
         try { await action(operation.Token); }
         catch (OperationCanceledException) { if (!_closing) HistoryOperationStatus.Text = "Cancelled. Your saved transcript is unchanged."; }
         catch (Exception ex) { if (!_closing) HistoryOperationStatus.Text = "Couldn't finish: " + ex.Message; }
-        finally { _historyOperation = null; if (!_closing) SetHistoryBusy(false); }
+        finally { _historyOperation = null; if (!_closing) { SetHistoryBusy(false); RefreshReadiness(); } }
     }
     private void SetHistoryBusy(bool busy)
     {

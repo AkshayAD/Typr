@@ -23,6 +23,7 @@ public sealed class SpeechSession : IDisposable
     ISpeechStream? stream;
     string? lastCaption;
     IMicrophoneCapture? capture;
+    bool captureActive;
     SavedAudioRecording? recording;
     volatile bool disposed;
     float[]? replaySamples; CancellationTokenSource? replayCancellation;
@@ -30,6 +31,7 @@ public sealed class SpeechSession : IDisposable
     readonly RecordingGeneration generationGate=new();
     int activeEpoch;
     int inputEpoch;
+    int readyInputEpoch;
     int pendingInputGeneration;
     int savedAudioLimit;
     string? lastAudioFileName;
@@ -41,6 +43,8 @@ public sealed class SpeechSession : IDisposable
     public event Action<string>? Error;
     /// <summary>Actual microphone lifetime, tagged to its recording. Replay never raises this event.</summary>
     public event Action<int,bool>? CaptureStateChanged;
+    /// <summary>First admitted PCM block, tagged to its recording and raised before inference.</summary>
+    public event Action<int>? InputReady;
     public SpeechSession(string modelDirectory, int threads = 2, int savedAudioLimit = 0, string? inputDeviceId = null)
     {
         SavedAudioLimit = savedAudioLimit;
@@ -52,9 +56,19 @@ public sealed class SpeechSession : IDisposable
         config.ModelConfig.Transducer.Decoder = Path.Combine(modelDirectory,"decoder.int8.onnx");
         config.ModelConfig.Transducer.Joiner = Path.Combine(modelDirectory,"joiner.int8.onnx");
         config.ModelConfig.Tokens = Path.Combine(modelDirectory,"tokens.txt");
-        config.ModelConfig.NumThreads = Math.Clamp(threads,2,4); config.ModelConfig.Provider = "cpu";
+        config.ModelConfig.NumThreads = Math.Clamp(threads,2,4);
         config.DecodingMethod = "greedy_search"; config.EnableEndpoint = 0;
-        recognizer = new OnlineRecognizer(config);
+        var providerConfig = Path.GetTempFileName();
+        try {
+            // Sleeping between inference tasks avoids spending CPU on idle ORT workers.
+            File.WriteAllText(providerConfig,"SessionConfig.session.intra_op.allow_spinning=0\nSessionConfig.session.inter_op.allow_spinning=0\n");
+            config.ModelConfig.Provider = "cpu:" + providerConfig;
+            recognizer = new OnlineRecognizer(config);
+        } finally {
+            try { File.Delete(providerConfig); }
+            catch(IOException) { }
+            catch(UnauthorizedAccessException) { }
+        }
         createStream = () => new SherpaSpeechStream(recognizer);
         createCapture = () => new SharedMicrophoneCapture(inputDeviceId);
         worker = StartWorker();
@@ -126,9 +140,11 @@ public sealed class SpeechSession : IDisposable
             if(!generationGate.IsCurrent(generation)) { Abort(); return; }
             capture.Samples += samples => QueueAudio(generation,samples);
             capture.Failed += error => CaptureFailed(generation,error);
-            if(!TryBeginInput(generation)) { Abort(); return; }
-            Volatile.Write(ref inputEpoch,generation);
-            capture.Start();
+            if(!capture.Start(() => {
+                if(!TryBeginInput(generation)) return false;
+                Volatile.Write(ref inputEpoch,generation); return true;
+            })) { Abort(); return; }
+            captureActive=true;
             CaptureStateChanged?.Invoke(generation,true);
             if(!generationGate.IsCurrent(generation)) Abort();
         }
@@ -194,18 +210,20 @@ public sealed class SpeechSession : IDisposable
     void QueueAudio(int generation, float[] samples)
     {
         if(disposed || samples.Length==0 || Volatile.Read(ref inputEpoch)!=generation || !generationGate.IsCurrent(generation)) return;
-        bool overflow=false, schedule=false;
+        bool overflow=false, schedule=false, ready=false;
         lock(audioGate) {
             if(disposed || Volatile.Read(ref inputEpoch)!=generation || !generationGate.IsCurrent(generation)) return;
             if(samples.Length > MaximumBufferedAudioSamples-bufferedAudioSamples) overflow=true;
             else {
                 capturedAudio.Enqueue((generation,samples)); bufferedAudioSamples+=samples.Length;
                 Interlocked.Add(ref admittedSamples,samples.Length);
+                if(readyInputEpoch!=generation) { readyInputEpoch=generation; ready=true; }
                 if(!audioDrainQueued) { audioDrainQueued=true; schedule=true; }
             }
         }
         if(overflow) CaptureFailed(generation,new InvalidOperationException("More than two minutes of captured audio is waiting for speech processing. Cancel and retry."));
         else {
+            if(ready && !disposed && Volatile.Read(ref inputEpoch)==generation && generationGate.IsCurrent(generation)) InputReady?.Invoke(generation);
             if(schedule) QueueAudioDrain(generation);
             PublishLevel(generation,samples);
         }
@@ -259,12 +277,13 @@ public sealed class SpeechSession : IDisposable
     {
         replayCancellation?.Cancel(); replayCancellation?.Dispose(); replayCancellation=null;
         var input=capture; capture=null;
+        bool wasActive=captureActive; captureActive=false;
         try { input?.Stop(); }
         finally {
             try { input?.Dispose(); }
             finally {
                 Volatile.Write(ref inputEpoch,0);
-                if(input!=null) CaptureStateChanged?.Invoke(activeEpoch,false);
+                if(wasActive) CaptureStateChanged?.Invoke(activeEpoch,false);
             }
         }
     }

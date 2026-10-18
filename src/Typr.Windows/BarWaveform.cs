@@ -5,7 +5,7 @@ using System.Windows.Threading;
 
 namespace Typr.Windows;
 
-internal enum BarActivity { Idle, Listening, Finishing }
+internal enum BarActivity { Idle, Opening, Listening, Finishing }
 
 /// <summary>Small audio-driven marks; the animation clock runs only for visible active work.</summary>
 internal sealed class BarWaveform : FrameworkElement
@@ -50,6 +50,11 @@ internal sealed class BarWaveform : FrameworkElement
         base.OnRender(drawing);
         var brush = TryFindResource(activity == BarActivity.Listening ? "AccentBrush" : activity == BarActivity.Finishing ? "TextBrush" : "MutedBrush") as Brush ?? SystemColors.WindowTextBrush;
         double phase = ShouldAnimate ? Stopwatch.GetElapsedTime(started).TotalSeconds : 0;
+        if (activity == BarActivity.Opening) {
+            double radius = 1.5 + (ShouldAnimate ? (1 + Math.Sin(phase * 3)) * .25 : 0);
+            drawing.DrawEllipse(brush, null, new Point(ActualWidth / 2, ActualHeight / 2), radius, radius);
+            return;
+        }
         if (activity == BarActivity.Finishing) {
             double spacing = Math.Min(7, Math.Max(0, (ActualWidth - 5) / 2));
             for (int i = 0; i < 3; i++) {

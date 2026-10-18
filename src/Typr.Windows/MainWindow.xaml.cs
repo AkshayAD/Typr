@@ -29,6 +29,7 @@ public partial class MainWindow : Window
     private bool _settingsWritable = true, _historyWritable = true;
     private bool _inputActive;
     private int _activeInputGeneration;
+    private int _readyInputGeneration = -1;
     private int _speechGeneration;
     private DictationMode _mode;
     private string _latest = "";
@@ -85,6 +86,7 @@ public partial class MainWindow : Window
         _clock.Tick += (_, _) => CaptureDuration.Text = $"Listening · {_captureTime.Elapsed:mm\\:ss}";
         SystemEvents.UserPreferenceChanged += SystemPreferenceChanged;
         Closing += OnClosing;
+        InitializeSpeechResources(desktopIntegration);
         InitializeCompanion(desktopIntegration);
     }
 
@@ -97,11 +99,13 @@ public partial class MainWindow : Window
         e.Cancel = true;
         if (_closing) return;
         _closing = true; CancelPendingRecordingStart(); _lifetime.Cancel(); _operation?.Cancel(); _download?.Cancel();
+        _gameModeMonitor?.Dispose(); _gameModeMonitor = null;
         if (_speech != null) TryCancel(_speech);
         _clock.Stop(); SystemEvents.UserPreferenceChanged -= SystemPreferenceChanged;
         await CloseCompanionAsync();
         _hook?.Dispose(); _hook = null;
         if (_pendingDelivery != null) { try { await _pendingDelivery; } catch { } }
+        if (_resourceTransitionTask != null) { try { await _resourceTransitionTask; } catch { } }
         var speech = _speech; _speech = null;
         if (speech != null) { try { await Task.Run(speech.Dispose); } catch { } }
         _overlay.Close();
@@ -124,6 +128,7 @@ public partial class MainWindow : Window
     private void Setup_Click(object sender, RoutedEventArgs e) => Navigate("Settings");
     private async void Hero_Click(object sender, RoutedEventArgs e)
     {
+        if (SpeechPausedForGaming) { Navigate("Settings"); StatusText.Text = "Speech is paused for gaming. Choose Everyday to resume."; return; }
         if (_loading || _busy || _recording || _recordingStart != null) return;
         if (_speech != null && (_speechFaulted || ReferenceEquals(sender, ReadinessActionButton))) Navigate("Settings");
         else if (_speech == null)
@@ -278,6 +283,7 @@ public partial class MainWindow : Window
 
     private async void Download_Click(object sender, RoutedEventArgs e)
     {
+        if (SpeechPausedForGaming) { StatusText.Text = "Speech downloads are paused for gaming. Choose Everyday to resume."; return; }
         if (_download != null) { _download.Cancel(); return; }
         if (_loading || _speech != null) return;
         _download = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
@@ -300,6 +306,7 @@ public partial class MainWindow : Window
     private async void Load_Click(object sender, RoutedEventArgs e) => await LoadSpeechAsync(focusPractice: true);
     private Task LoadSpeechAsync(bool focusPractice)
     {
+        if (SpeechPausedForGaming || _resourceTransitioning) { StatusText.Text = "Speech is paused for gaming or changing modes. Wait for Everyday mode before preparing speech."; return Task.CompletedTask; }
         if (_loading) return _speechLoadingTask ?? Task.CompletedTask;
         if (_speech != null || _download != null) return Task.CompletedTask;
         return _speechLoadingTask = LoadSpeechCoreAsync(focusPractice);
@@ -320,16 +327,11 @@ public partial class MainWindow : Window
             {
                 if (_closing || !ReferenceEquals(_speech, loaded)) return;
                 if (active) { _inputActive = true; _activeInputGeneration = generation; }
-                else if (_activeInputGeneration == generation) _inputActive = false;
-                if (active && _recording && generation == _speechGeneration)
-                {
-                    _captureTime.Restart(); _clock.Start(); _overlay.Listening(); CaptureDuration.Text = "Listening · 00:00";
-                    ShortcutStatus.Text = _practiceCapture ? "Listening. Release the keys or choose Finish dictation; Esc cancels." : "Listening. Release Ctrl or Alt to finish; hands-free uses the finish shortcut. Esc cancels.";
-                    StatusText.Text = "Listening on this PC.";
-                }
+                else if (_activeInputGeneration == generation) { _inputActive = false; if (_readyInputGeneration == generation) _readyInputGeneration = -1; }
                 if (!active && !_recording && !_busy) CaptureDuration.Text = "Hold Ctrl + Alt to talk";
                 RefreshReadiness();
             });
+            loaded.InputReady += generation => Dispatcher.BeginInvoke(() => SpeechInputReady(loaded, generation));
             loaded.CaptionForRecording += (generation, text) =>
             {
                 Dispatcher.BeginInvoke(() =>
@@ -372,8 +374,18 @@ public partial class MainWindow : Window
     {
         DownloadButton.IsEnabled = LoadButton.IsEnabled = ModelPathBox.IsEnabled = ThreadCountBox.IsEnabled = enabled;
     }
+    private void SpeechInputReady(SpeechSession speech, int generation)
+    {
+        if (_closing || !ReferenceEquals(_speech, speech) || !_recording || generation != _speechGeneration || _readyInputGeneration == generation) return;
+        _readyInputGeneration = generation;
+        _captureTime.Restart(); _clock.Start(); _overlay.Listening(); CaptureDuration.Text = "Listening · 00:00";
+        ShortcutStatus.Text = _practiceCapture ? "Listening. Release the keys or choose Finish dictation; Esc cancels." : "Listening. Release Ctrl or Alt to finish; hands-free uses the finish shortcut. Esc cancels.";
+        StatusText.Text = "Listening on this PC.";
+        RefreshReadiness();
+    }
     private async void Pause_Click(object sender, RoutedEventArgs e)
     {
+        _resumeSpeechAfterGaming = false;
         if (_loading) return;
         _loading = true; CancelCapture();
         var speech = _speech; _speech = null;
@@ -384,23 +396,26 @@ public partial class MainWindow : Window
     }
     private void RefreshReadiness()
     {
-        bool ready = _speech != null && !_loading && !_speechFaulted;
+        bool paused = SpeechPausedForGaming;
+        bool ready = _speech != null && !_loading && !_speechFaulted && !paused && !_resourceTransitioning;
         bool installed = _speech != null || ModelDownload.IsReady(ModelPathBox.Text.Trim());
         bool starting = _recordingStart != null;
-        bool listening = _recording && _inputActive && _activeInputGeneration == _speechGeneration;
+        bool listening = _recording && _readyInputGeneration == _speechGeneration;
         if (_hook != null) _hook.CancellationActive = _recording || _busy || starting;
         InputDeviceBox.IsEnabled = RefreshInputsButton.IsEnabled = !_loading && _speech == null && !starting;
-        RailStatus.Text = _inputActive ? (listening ? "Microphone active" : "Closing microphone…") : _recording ? "Starting microphone…" : _loading ? "Preparing speech…" : _speechFaulted && _speech != null ? "Speech needs attention" : "Microphone off";
-        HeroButton.Content = ready ? (_settings.AllowButtonRecording ? "Try dictation  →" : "Try the shortcut  →") : installed && _speech == null ? "Prepare speech  →" : "Set up Typr  →";
-        HeroButton.IsEnabled = ReadinessActionButton.IsEnabled = !_loading && !_busy && !_recording && !starting;
-        ReadinessActionButton.Content = installed && _speech == null ? "Prepare speech" : "Open setup";
-        ReadinessTitle.Text = _speechFaulted && _speech != null ? "Speech needs a fresh start." : _loading ? "Updating speech…" : ready ? "Speech ready. Microphone off until dictation." : installed ? "Speech model installed. Ready to prepare." : "Your voice, at home on your PC.";
-        ReadinessDetail.Text = _speechFaulted && _speech != null ? "Unload speech in Settings, check the selected input, then prepare it again." : ready ? "Keep speech prepared for quicker starts. Hold Ctrl + Alt to turn the microphone on; release to finish. Wait for Listening before speaking." : installed ? "Prepare speech to load the model into memory with the microphone off. Your recording shortcut can also prepare it; the first start takes longer." : "Download the speech model once in Settings. Then prepare speech for quicker starts, or hold Ctrl + Alt and wait for Listening before speaking.";
+        RailStatus.Text = _inputActive ? (_recording ? "Microphone active" : "Closing microphone…") : _recording ? "Starting microphone…" : _loading ? "Preparing speech…" : _speechFaulted && _speech != null ? "Speech needs attention" : "Microphone off";
+        HeroButton.Content = paused ? "Speech paused" : ready ? (_settings.AllowButtonRecording ? "Try dictation  →" : "Try the shortcut  →") : installed && _speech == null ? "Prepare speech  →" : "Set up Typr  →";
+        HeroButton.IsEnabled = !paused && !_resourceTransitioning && !_loading && !_busy && !_recording && !starting;
+        ReadinessActionButton.IsEnabled = !_resourceTransitioning && !_loading && !_busy && !_recording && !starting;
+        ReadinessActionButton.Content = paused ? "Change mode" : installed && _speech == null ? "Prepare speech" : "Open setup";
+        ReadinessTitle.Text = paused ? "Make room for your game." : _speechFaulted && _speech != null ? "Speech needs a fresh start." : _loading ? "Preparing speech…" : ready ? "Speech ready. Microphone off until dictation." : installed ? "Speech model installed. Ready to prepare." : "Your voice, at home on your PC.";
+        ReadinessDetail.Text = paused ? "Gaming mode pauses new dictation and releases speech resources after current dictation finishes. Choose Everyday in Settings to resume." : _speechFaulted && _speech != null ? "Unload speech in Settings, check the selected input, then prepare it again." : ready ? "Keep speech prepared for quicker starts. Hold Ctrl + Alt to turn the microphone on; release to finish. Wait for Listening before speaking." : installed ? "Prepare speech to load the model into memory with the microphone off. Your recording shortcut can also prepare it; the first start takes longer." : "Download the speech model once in Settings. Then prepare speech for quicker starts, or hold Ctrl + Alt and wait for Listening before speaking.";
         PracticeButton.IsEnabled = !_busy && !starting && (_recording || ready && _settings.AllowButtonRecording);
         PracticeButton.Content = starting ? "Preparing…" : _busy ? "Finishing…" : _recording ? "Finish dictation" : _settings.AllowButtonRecording ? "Start dictation" : "Use recording shortcut";
         CancelButton.Visibility = _recording || _busy || starting ? Visibility.Visible : Visibility.Collapsed;
-        CaptureState.Text = starting ? "PREPARING TO LISTEN" : _recording ? (listening ? "LISTENING" : "STARTING MICROPHONE") : _inputActive ? "CLOSING MICROPHONE" : _busy ? _processingPhase.ToUpperInvariant() : _speechFaulted && _speech != null ? "SPEECH NEEDS ATTENTION" : ready ? "SPEECH READY / MICROPHONE OFF" : "MICROPHONE OFF";
+        CaptureState.Text = starting ? "PREPARING TO LISTEN" : _recording ? (listening ? "LISTENING" : "STARTING MICROPHONE") : _inputActive ? "CLOSING MICROPHONE" : _busy ? _processingPhase.ToUpperInvariant() : paused ? "GAMING / SPEECH PAUSED" : _speechFaulted && _speech != null ? "SPEECH NEEDS ATTENTION" : ready ? "SPEECH READY / MICROPHONE OFF" : "MICROPHONE OFF";
         RefreshCompanionState();
+        RefreshSpeechResources();
     }
     private async void Practice_Click(object sender, RoutedEventArgs e)
     {
@@ -454,7 +469,7 @@ public partial class MainWindow : Window
             _captureSettings = _settings; _practiceCapture = practice;
             _restoreDeliveryFocus = restoreFocus;
             _target = practice ? null : destination ?? ClipboardDelivery.CaptureTargetAsync(foreground, _operation.Token);
-            _mode = mode; _recording = true;
+            _mode = mode; _recording = true; _readyInputGeneration = -1;
             _speechGeneration = _speech!.StartRecording(); _overlay.Begin(foreground);
             _captureTime.Reset(); _clock.Stop(); CaptureDuration.Text = "Opening microphone…";
             UpdateLiveBarCaption("");
@@ -531,7 +546,7 @@ public partial class MainWindow : Window
     private void CancelCapture()
     {
         _barHoldActive = false; ++_barHoldGeneration; CancelPendingRecordingStart();
-        _recording = false; _speechGeneration = -1; _operation?.Cancel(); _clock.Stop(); MicLevel.Value = 0;
+        _recording = false; _speechGeneration = _readyInputGeneration = -1; _operation?.Cancel(); _clock.Stop(); MicLevel.Value = 0;
         if (_speech != null) TryCancel(_speech);
         _overlay.Cancel(); CaptureDuration.Text = _inputActive ? "Closing microphone…" : "Hold Ctrl + Alt to talk";
         ShortcutStatus.Text = "Cancelled. Start again whenever you're ready.";

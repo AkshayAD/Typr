@@ -72,6 +72,20 @@ public sealed class SettingsMigrationTests
     }
 
     [Theory]
+    [InlineData("Automatic", "Automatic")]
+    [InlineData("Everyday", "Everyday")]
+    [InlineData("Gaming", "Gaming")]
+    [InlineData("unknown", "Automatic")]
+    public void SpeechResourceModeIsPreservedOrDefaultsSafely(string value, string expected)
+    {
+        var settings = SettingsMigrator.Load(JsonSerializer.Serialize(new { SpeechResourceMode = value, CpuThreads = 4, BarVisible = false }));
+        Assert.Equal(expected, settings.SpeechResourceMode);
+        Assert.Equal(4, settings.CpuThreads);
+        Assert.False(settings.BarVisible);
+        Assert.Equal(expected, SettingsMigrator.Load(SettingsMigrator.Save(settings)).SpeechResourceMode);
+    }
+
+    [Theory]
     [InlineData("{\"SettingsVersion\":2}", .85)]
     [InlineData("{\"SettingsVersion\":2,\"CaptionOpacity\":0.15}", .15)]
     [InlineData("{\"CaptionOpacityPercent\":15}", .15)]

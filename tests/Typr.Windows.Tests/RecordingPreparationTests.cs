@@ -104,6 +104,31 @@ public sealed class RecordingPreparationTests(WpfFixture fixture)
         });
     });
 
+    [Fact] public void ListeningWaitsForActualInputAndIgnoresStaleOrCancelledReadiness() => fixture.Run(() => {
+        WithWindow((window, _) => {
+            using var speech = new SpeechSession(() => new FakeStream(), () => new FakeInput());
+            using var previous = new SpeechSession(() => new FakeStream(), () => new FakeInput());
+            Set(window, "_speech", speech); Set(window, "_recording", true); Set(window, "_speechGeneration", 21);
+            Set(window, "_inputActive", true); Set(window, "_activeInputGeneration", 21);
+            Invoke(window, "RefreshReadiness");
+            Assert.Equal("STARTING MICROPHONE", Control<TextBlock>(window, "CaptureState").Text);
+            Assert.False(Get<System.Windows.Threading.DispatcherTimer>(window, "_clock").IsEnabled);
+            Invoke(window, "SpeechInputReady", previous, 21);
+            Invoke(window, "SpeechInputReady", speech, 20);
+            Assert.Equal("STARTING MICROPHONE", Control<TextBlock>(window, "CaptureState").Text);
+            Invoke(window, "SpeechInputReady", speech, 21);
+            Assert.Equal("LISTENING", Control<TextBlock>(window, "CaptureState").Text);
+            Assert.True(Get<System.Windows.Threading.DispatcherTimer>(window, "_clock").IsEnabled);
+            Assert.Equal("Listening on this PC.", Control<TextBlock>(window, "StatusText").Text);
+            Invoke(window, "CancelCapture");
+            Invoke(window, "SpeechInputReady", speech, 21);
+            Assert.Equal(-1, Get<int>(window, "_readyInputGeneration"));
+            Assert.Equal("CLOSING MICROPHONE", Control<TextBlock>(window, "CaptureState").Text);
+            Assert.False(Get<System.Windows.Threading.DispatcherTimer>(window, "_clock").IsEnabled);
+            Set(window, "_speech", null);
+        });
+    });
+
     [Fact] public void EmptyRecordingKeepsTheLastSuccessfulTranscriptAvailable() => fixture.Run(() => {
         WithWindow((window, _) => {
             var input = new FakeInput();

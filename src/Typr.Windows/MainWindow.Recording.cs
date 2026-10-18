@@ -18,12 +18,14 @@ public partial class MainWindow
     private void ConfigureDictationHook()
     {
         if (!_desktopIntegration || !IsLoaded || _closing) return;
-        if (_hook != null && _hookRecordingEnabled == _settings.CommandShortcutsEnabled) return;
+        if (SpeechPausedForGaming && !_recording && !_busy) { _hook?.Dispose(); _hook = null; return; }
+        bool enabled = EffectiveShortcutSettings.CommandShortcutsEnabled;
+        if (_hook != null && _hookRecordingEnabled == enabled) return;
         if (!_settings.CommandShortcutsEnabled && (_recordingStart != null || _recording || _busy)) CancelCapture();
         _hook?.Dispose(); _hook = null;
         try
         {
-            _hookRecordingEnabled = _settings.CommandShortcutsEnabled;
+            _hookRecordingEnabled = enabled;
             _hook = new GlobalKeyboardHook(_hookRecordingEnabled);
             _hook.Updated += (update, foreground) => Dispatcher.BeginInvoke(() => HandleHotkey(update, foreground));
             _hook.EscapePressed += () => Dispatcher.BeginInvoke(() =>
@@ -43,6 +45,7 @@ public partial class MainWindow
 
     private async Task StartCaptureAsync(DictationMode mode, nint foreground, bool practice, bool restoreFocus = false)
     {
+        if (SpeechPausedForGaming || _resourceTransitioning) { StatusText.Text = "Speech is paused for gaming. Choose Everyday in Settings to resume."; return; }
         if (_closing || _recording || _busy || _recordingStart != null || _historyOperation != null) return;
         if (mode == DictationMode.VoiceEdit) { StatusText.Text = "Voice editing isn't available. Nothing was recorded."; return; }
         if (_speechFaulted && _speech != null) { StatusText.Text = "Unload speech in Settings, check the selected input, then try again."; return; }

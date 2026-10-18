@@ -16,6 +16,7 @@ public sealed record AppSettings
     public int CaptionMaxLines { get; init; } = 2;
     public int CaptionMaxCharacters { get; init; } = 60;
     public int CpuThreads { get; init; } = 2;
+    public string SpeechResourceMode { get; init; } = "Automatic";
     public int SavedAudioLimit { get; init; }
     public string? SpeechModelPath { get; init; }
     public string Theme { get; init; } = "System";
@@ -77,6 +78,7 @@ public static class SettingsMigrator
             CaptionMaxLines = Math.Clamp(settings.CaptionMaxLines, 1, 3),
             CaptionMaxCharacters = Math.Clamp(settings.CaptionMaxCharacters, 10, 120),
             CpuThreads = Math.Clamp(settings.CpuThreads, 2, 4),
+            SpeechResourceMode = CanonicalChoice(settings.SpeechResourceMode, "Automatic", "Everyday", "Gaming"),
             SavedAudioLimit = Math.Clamp(settings.SavedAudioLimit, 0, 200),
             Theme = CanonicalChoice(settings.Theme, "System", "Light", "Dark"),
             Accent = CanonicalChoice(settings.Accent, "Iris", "Forest", "Ocean"),
@@ -137,7 +139,7 @@ public static class SettingsMigrator
     {
         string[] names = [nameof(AppSettings.SettingsVersion), nameof(AppSettings.PolishEnabled),
             nameof(AppSettings.LiveCaptionsEnabled), nameof(AppSettings.BarVisible), nameof(AppSettings.CaptionOpacity),
-            nameof(AppSettings.CaptionMaxLines), nameof(AppSettings.CaptionMaxCharacters), nameof(AppSettings.CpuThreads),
+            nameof(AppSettings.CaptionMaxLines), nameof(AppSettings.CaptionMaxCharacters), nameof(AppSettings.CpuThreads), nameof(AppSettings.SpeechResourceMode),
             nameof(AppSettings.SavedAudioLimit), nameof(AppSettings.SpeechModelPath), nameof(AppSettings.Theme),
             nameof(AppSettings.Accent), nameof(AppSettings.SaveHistory), nameof(AppSettings.Vocabulary),
             nameof(AppSettings.Snippets), nameof(AppSettings.AutoPasteEnabled), nameof(AppSettings.AiPolishEnabled),

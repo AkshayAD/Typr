@@ -50,8 +50,8 @@ Native checks observed **96 by 16** during listening with separate live text, **
 
 ## Verification and limits
 
-- Latest Infrastructure Release: **123 passed, zero skipped**, including real-model replay, native capture stop/drain, direct streaming, backlog/drain, sample counts, converter flush and cancellation/restart tests.
-- Latest Windows Release: **122 passed, zero skipped**, including three readiness checks, nine recording-state regressions, compact/scaled activity geometry, popup overflow/menu toggle, bar gestures, native delivery/focus and nonactivation checks.
+- Latest Infrastructure Release: **128 passed, zero skipped**, including real-model replay, native capture stop/drain/start authorization, first-PCM readiness, direct streaming, backlog/drain, sample counts, converter flush and cancellation/restart tests.
+- Prior full Windows Release: **122 passed, zero skipped**, before the startup/resource follow-ups below. The latest follow-up passed **100 selected hidden WPF checks**; on-screen/native-input checks remain deferred after Escape stopped Computer Use.
 - Corrected the paced replay harness to follow absolute elapsed time. It now admits all **94,640 frames**; the old relative-delay harness could stop after about 77% of the fixture. Complete final words are now asserted on initial and recovery recordings.
 - One complete synthetic stop observation was **843.6 ms**, including the 300 ms ending tail. It is not a controlled improvement percentage or a human dictation measurement.
 - Native replay-to-external-field check pasted the entire synthetic sentence, including its last word, and reported **Pasted and verified** with AI off. The prior session also verified that sentence and paste-last in Edge.
@@ -89,3 +89,15 @@ The workspace now distinguishes an installed model from a prepared model. **Prep
 For daily use, keep the model prepared and use live captions for early feedback. AI polishing runs after local recognition; it adds provider/process/network time before the final insertion. The existing Raw chord bypasses AI for the fastest path. Keep the selected low-effort Luna default for polished output rather than silently lowering quality. Avoid extra model requests or explanatory output, consistent with [OpenAI's latency guidance](https://developers.openai.com/api/docs/guides/latency-optimization). Final authenticated provider latency and natural-voice accuracy still need a representative user test.
 
 The combined self-contained build was published and opened with the normal profile. The installed/unloaded workspace visibly offered Prepare speech; clicking it reached **SPEECH READY / MICROPHONE OFF**, with the practice field focused. No recording was started in the normal profile. This leaves the physical immediate-release check ready for the user.
+
+## Follow-up: preserve the opening and report actual readiness
+
+The next physical test returned the ending but missed the opening. The raw ASR also lacked it, so polishing did not remove those words. Another local recognizer did not recover the opening from the matching already-retained practice clip. That narrows the issue but does not prove every missing syllable's cause.
+
+The prepared model's first stream creation took under 9 ms; no speculative stream/capture reordering was introduced. A no-retention native-source probe measured approximately 568 ms in source construction, 7 ms in native start and a further 58 ms to converted PCM, about 642 ms overall. The old Silk activity used the recording-request flag and looked like Listening before input was available.
+
+Silk now shows one muted opening pulse, then its accent waveform only after the first valid PCM is admitted. Workspace status, overlay status and accessibility help use that same readiness boundary. Native microphone on/off remains a separate lifetime signal. Empty, stale, cancelled and overflowed samples cannot mark another recording ready. All marks stay inside the compact geometry.
+
+Release/cancel can now revoke a pending start while native initialization is blocked. Authorization is claimed immediately before native start; a revoked source disposes without opening input or reporting an active capture. Already-started input keeps its existing ending tail and final native drain. Five hardware-free startup cases and a hidden UI readiness regression cover these boundaries.
+
+The isolated device check observed Starting microphone, then first-PCM Listening, then microphone off after finish. It retained no audio and used a no-op recognition stream for startup measurement. The user stopped further screen control with Escape. New resource-mode changes and natural-voice opening/end accuracy have not been observed on screen since; the latest build must not be described as opened or fully validated. Resource/CPU/GPU work is recorded in [the resource plan](RESOURCE_AND_GPU_PLAN.md).

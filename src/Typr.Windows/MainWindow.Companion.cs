@@ -66,10 +66,10 @@ public partial class MainWindow
         ConfigureCompanion(); RefreshHistorySummary();
         if (desktopIntegration) Loaded += async (_, _) =>
         {
-            ShortcutConfigurationStatus.Text = _commandShortcuts.Configure(this, _settings);
+            ShortcutConfigurationStatus.Text = _commandShortcuts.Configure(this, EffectiveShortcutSettings);
             ConfigureDictationHook();
-            _targetTimer.Start(); ConfigureCompanion();
-            await RefreshProvidersAsync();
+            if (!SpeechPausedForGaming) _targetTimer.Start(); ConfigureCompanion();
+            if (!SpeechPausedForGaming) await RefreshProvidersAsync();
         };
     }
 
@@ -82,7 +82,7 @@ public partial class MainWindow
     {
         if (!_companionInitialized) return;
         ConfigureCaptionOverlay();
-        if (_desktopIntegration) _dictationBar.Configure(_settings.BarVisible, _settings.LiveCaptionsEnabled,
+        if (_desktopIntegration) _dictationBar.Configure(_settings.BarVisible && !(SpeechPausedForGaming && !_recording && !_busy), _settings.LiveCaptionsEnabled,
             _settings.BarHoverActions, _settings.BarContextActions, _settings.BarLeft, _settings.BarTop,
             _settings.BarOpacity, _settings.BarScale, _settings.BarHoverDelay, _settings.AllowButtonRecording);
         RefreshCompanionState();
@@ -92,7 +92,8 @@ public partial class MainWindow
         if (!_companionInitialized || !_desktopIntegration) return;
         _dictationBar.UpdateState(_speech != null && !_speechFaulted && !_loading, _recording, _busy || _loading || _recordingStart != null,
             _settings.LiveCaptionsEnabled && (_recording || _busy) ? _liveCaption : null,
-            _loading || _recordingStart != null ? "Preparing speech…" : _busy ? _processingPhase : _recording ? (_inputActive && _activeInputGeneration == _speechGeneration ? "Listening · Esc cancels" : "Opening microphone…") : _inputActive ? "Closing microphone…" : _speechFaulted && _speech != null ? "Speech needs attention" : _speech != null ? "Ready · microphone off" : "Microphone off");
+            _loading || _recordingStart != null ? "Preparing speech…" : _busy ? _processingPhase : _recording ? (_readyInputGeneration == _speechGeneration ? "Listening · Esc cancels" : "Opening microphone…") : _inputActive ? "Closing microphone…" : _speechFaulted && _speech != null ? "Speech needs attention" : _speech != null ? "Ready · microphone off" : "Microphone off",
+            inputActive: _readyInputGeneration == _speechGeneration);
     }
     private void UpdateLiveBarCaption(string text) { _liveCaption = text; RefreshCompanionState(); }
     private async Task CloseCompanionAsync()
@@ -114,14 +115,14 @@ public partial class MainWindow
     {
         if (_companionInitializing || !_companionInitialized) return;
         PersistSettings(_settings with { AutoPasteEnabled = AutoPasteBox.IsChecked == true, AiPolishEnabled = AiPolishBox.IsChecked == true, CommandShortcutsEnabled = CommandShortcutsBox.IsChecked == true });
-        if (_desktopIntegration && IsLoaded) { ShortcutConfigurationStatus.Text = _commandShortcuts.Configure(this, _settings); ConfigureDictationHook(); }
+        if (_desktopIntegration && IsLoaded) { ShortcutConfigurationStatus.Text = _commandShortcuts.Configure(this, EffectiveShortcutSettings); ConfigureDictationHook(); }
         ConfigureCompanion();
     }
     private void Shortcut_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_companionInitializing || !_companionInitialized) return;
         PersistSettings(_settings with { MicrophoneShortcut = (string)MicrophoneShortcutBox.SelectedItem, HandsFreeShortcut = (string)HandsFreeShortcutBox.SelectedItem, PasteShortcut = (string)PasteShortcutBox.SelectedItem });
-        if (_desktopIntegration && IsLoaded) ShortcutConfigurationStatus.Text = _commandShortcuts.Configure(this, _settings);
+        if (_desktopIntegration && IsLoaded) ShortcutConfigurationStatus.Text = _commandShortcuts.Configure(this, EffectiveShortcutSettings);
     }
     private void ResetBarPosition_Click(object sender, RoutedEventArgs e)
     {

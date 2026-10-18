@@ -170,6 +170,7 @@ public partial class MainWindow
 
     private async void CompareReasoning_Click(object sender, RoutedEventArgs e)
     {
+        if (SpeechPausedForGaming) { BenchmarkResultBox.Text = "Comparisons are paused for gaming. Choose Everyday to resume."; return; }
         if (_providerBusy || _busy || _recording) return;
         string sample = BenchmarkInputBox.Text;
         using var comparison = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);

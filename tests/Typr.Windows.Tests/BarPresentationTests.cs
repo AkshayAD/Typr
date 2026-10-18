@@ -143,7 +143,7 @@ public sealed class BarPresentationTests(WpfFixture fixture)
             foreach (var (recording, busy, status) in new[] {
                 (false, false, "Ready"), (true, false, "Listening"),
                 (false, true, "Recognizing captured audio"), (false, true, "Polishing captured words") }) {
-                bar.UpdateState(true, recording, busy, "A live caption that stays outside the pill", status);
+                bar.UpdateState(true, recording, busy, "A live caption that stays outside the pill", status, inputActive: recording);
                 Assert.False(bar.IsExpanded);
                 Assert.Equal(frame, new Rect(bar.Left, bar.Top, bar.Width, bar.Height));
                 Assert.Equal(anchor, bar.CompactPosition);
@@ -188,7 +188,7 @@ public sealed class BarPresentationTests(WpfFixture fixture)
             Assert.False(ButtonNamed(bar, "Hold to talk").IsEnabled);
             bar.BeginPointer("HoldToTalk", new Point(100, 100)); bar.EndPointer(new Point(100, 100));
             Assert.Empty(requested);
-            bar.UpdateState(true, true, false, null, "Listening");
+            bar.UpdateState(true, true, false, null, "Listening", inputActive: true);
             var finish = ButtonNamed(bar, "Finish dictation"); Assert.True(finish.IsEnabled);
             finish.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             bar.UpdateState(true, false, true, null, "Finishing");
@@ -440,7 +440,7 @@ public sealed class BarPresentationTests(WpfFixture fixture)
                 bar.Configure(false, true, ["HoldToTalk", "PasteLast", "ToggleMicrophone", "ToggleCaptions"], ["OpenWorkspace", "ToggleMicrophone", "PasteLast", "ToggleCaptions", "HideBar"], 400, 500, allowButtonRecording: false);
                 Render("idle"); bar.SetPointerInside(true); Render("hover");
                 ButtonNamed(bar, "Bar actions").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)); Render("context");
-                bar.UpdateState(true, true, false, "A small thought, ready to become words.", "Listening"); Render("recording");
+                bar.UpdateState(true, true, false, "A small thought, ready to become words.", "Listening", inputActive: true); Render("recording");
                 Assert.False(bar.IsVisible);
             }
             finally { bar.Close(); }

@@ -38,7 +38,7 @@ internal sealed class DictationBarWindow : Window
     private ToolTip? _openHint;
     private string[] _hoverActions = ["HoldToTalk", "PasteLast", "ToggleMicrophone", "ToggleCaptions"];
     private string[] _contextActions = ["OpenWorkspace", "ToggleMicrophone", "PasteLast", "ToggleCaptions", "HideBar"];
-    private bool _captionsEnabled = true, _micReady, _recording, _busy, _expanded, _contextOpen, _pointerInside;
+    private bool _captionsEnabled = true, _micReady, _recording, _inputActive, _busy, _expanded, _contextOpen, _pointerInside;
     private bool _pointerDown, _dragging, _holdActive, _positionSet, _closed, _actionsDirty, _primaryDirty;
     private bool _userPosition, _allowButtonRecording = true;
     private bool _layoutUpwards = true, _dragLayoutPinned;
@@ -146,10 +146,10 @@ internal sealed class DictationBarWindow : Window
         UpdatePrimary(); ApplyBackground(); ApplyLayout();
         if (visible) ShowBar(); else HideBar();
     }
-    public void UpdateState(bool micReady, bool recording, bool busy, string? caption, string status)
+    public void UpdateState(bool micReady, bool recording, bool busy, string? caption, string status, bool inputActive = false)
     {
         bool changed = _micReady != micReady || _recording != recording || _busy != busy;
-        _micReady = micReady; _recording = recording; _busy = busy;
+        _micReady = micReady; _recording = recording; _inputActive = inputActive; _busy = busy;
         AutomationProperties.SetHelpText(_shell, status); _caption.Text = caption ?? "";
         if (changed) { UpdatePrimary(); RebuildActions(); }
         RefreshActivity(); ApplyLayout(true);
@@ -270,7 +270,7 @@ internal sealed class DictationBarWindow : Window
     private void RefreshActivity()
     {
         if (_pointerDown) { _primaryDirty = true; return; }
-        var activity = _busy ? BarActivity.Finishing : _recording ? BarActivity.Listening : BarActivity.Idle;
+        var activity = _busy ? BarActivity.Finishing : _recording ? (_inputActive ? BarActivity.Listening : BarActivity.Opening) : BarActivity.Idle;
         if (_rest is BarWaveform rest) rest.SetActivity(activity);
         foreach (var wave in PrimaryWaves()) wave.SetActivity(activity);
     }

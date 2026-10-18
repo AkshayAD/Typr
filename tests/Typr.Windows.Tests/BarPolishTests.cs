@@ -68,6 +68,59 @@ public sealed class BarPolishTests(WpfFixture fixture)
         Assert.False(finishing.SequenceEqual(idle)); Assert.False(wave.IsAnimating);
     });
 
+    [Fact] public void OpeningWaitsForActiveInputWithoutChangingCompactFrameOrFinishAction() => fixture.Run(() => {
+        var bar = new DictationBarWindow();
+        try {
+            var requested = new List<string>(); bar.ActionRequested += requested.Add;
+            bar.Configure(false, true, [], [], 100, 500, allowButtonRecording: false);
+            var frame = new Rect(bar.Left, bar.Top, bar.Width, bar.Height);
+            bar.UpdateState(true, true, false, null, "Opening microphone");
+            AssertActivity(BarActivity.Opening);
+            var finish = Descendants<Button>(bar).Single(button => AutomationProperties.GetName(button) == "Finish dictation");
+            Assert.True(finish.IsEnabled);
+            bar.UpdateLevel(1);
+            AssertActivity(BarActivity.Opening);
+            // The recording flag stays true; only the input readiness changes.
+            bar.UpdateState(true, true, false, null, "Listening", inputActive: true);
+            AssertActivity(BarActivity.Listening);
+            Assert.Same(finish, Descendants<Button>(bar).Single(button => AutomationProperties.GetName(button) == "Finish dictation"));
+            finish.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert.Equal(new[] { "ToggleRecording" }, requested);
+            bar.UpdateState(true, false, true, null, "Finishing", inputActive: true);
+            AssertActivity(BarActivity.Finishing);
+            bar.UpdateState(true, false, false, null, "Ready");
+            AssertActivity(BarActivity.Idle);
+
+            void AssertActivity(BarActivity expected)
+            {
+                Assert.Contains(Descendants<BarWaveform>(bar), wave => wave.Activity == expected);
+                Assert.All(Descendants<BarWaveform>(bar), wave => Assert.False(wave.IsAnimating));
+                Assert.Equal(new Size(96, 16), new Size(bar.Width, bar.Height));
+                Assert.Equal(frame, new Rect(bar.Left, bar.Top, bar.Width, bar.Height));
+                Assert.False(bar.IsExpanded); Assert.False(bar.IsVisible);
+                Assert.DoesNotContain(Descendants<TextBlock>(bar), text => !string.IsNullOrWhiteSpace(text.Text));
+            }
+        } finally { bar.Close(); }
+    });
+
+    [Fact] public void OpeningUsesMutedMarkAndIgnoresAudioLevelUntilListening() => fixture.Run(() => {
+        var wave = new BarWaveform { Width = 22, Height = 14 };
+        wave.Resources["MutedBrush"] = Brushes.Gray;
+        wave.Resources["AccentBrush"] = Brushes.Magenta;
+        wave.SetActivity(BarActivity.Opening);
+        var opening = Render(wave);
+        wave.SetLevel(1); Assert.Equal(opening, Render(wave));
+        Assert.Contains(Enumerable.Range(0, opening.Length / 4), i => opening[i * 4 + 3] > 0);
+        Assert.All(Enumerable.Range(0, opening.Length / 4), i => {
+            Assert.Equal(opening[i * 4], opening[i * 4 + 1]);
+            Assert.Equal(opening[i * 4 + 1], opening[i * 4 + 2]);
+        });
+        wave.SetActivity(BarActivity.Listening);
+        Assert.False(opening.SequenceEqual(Render(wave)));
+        wave.SetActivity(BarActivity.Idle);
+        Assert.False(wave.IsAnimating);
+    });
+
     static byte[] Render(FrameworkElement element)
     {
         element.Measure(new Size(22, 14)); element.Arrange(new Rect(0, 0, 22, 14)); element.UpdateLayout();
